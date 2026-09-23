@@ -8,13 +8,6 @@
 
 线上地址：[https://zhijunio.github.io/websocket-tutorial/](https://zhijunio.github.io/websocket-tutorial/)
 
-可以从首页开始：
-
-- [课程首页](index.html)
-- [课程列表](index.html#lessons)
-- [RFC 6455 参考资料](index.html#references)
-- [示例项目索引](examples/index.html)
-
 课程页面和 RFC 参考文档是静态 HTML，可以直接在 GitHub Pages 中阅读。
 
 Java、Spring Boot、Maven 和 Docker 示例需要克隆仓库后在本地运行，GitHub Pages 不负责运行后端服务。
