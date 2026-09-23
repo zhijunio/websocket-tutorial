@@ -8,6 +8,7 @@ h1 { max-width:720px; margin:12px 0 18px; font-size:clamp(2.2rem,6vw,4rem); }
 h2 { margin-top:48px; font-size:1.65rem; }
 .lead { max-width:680px; color:var(--muted); font-size:1.2rem; }
 .note,.exercise { border-left:3px solid var(--accent); background:var(--accent-soft); padding:14px 18px; margin:24px 0; }
+.practice { margin:24px 0; }
 .answer { margin-top:10px; padding:8px 12px; border:1px solid var(--line); background:rgba(255,255,255,.45); }
 .answer summary { color:var(--accent); cursor:pointer; font:700 14px/1.4 ui-sans-serif,system-ui,sans-serif; }
 .answer p { margin:10px 0 2px; }

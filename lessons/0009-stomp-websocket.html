@@ -81,7 +81,7 @@ mvn spring-boot:run</pre>
     <p>打开两个浏览器标签页，都点击 Connect 和 Subscribe，再在一个标签页点击 Send。两个标签页都应收到 <code>MESSAGE</code>。在 DevTools Network 的 WS Messages 中，可以看到 STOMP 文本帧。</p>
 
     <h2>7. 练习：先回忆，再验证</h2>
-    <div class="exercise">
+    <div class="practice">
         <p>运行示例后回答下面 4 个问题：</p>
         <ol>
             <li>为什么 <code>/ws-stomp</code> 和 <code>/topic/room</code> 不是同一种地址？<details class="answer"><summary>查看答案</summary><p><code>/ws-stomp</code> 是 WebSocket 握手入口；<code>/topic/room</code> 是 STOMP 消息目的地，由 Broker 管理订阅和投递。</p></details></li>

@@ -77,7 +77,7 @@ docker compose up --build</pre>
     </table>
 
     <h2>6. 练习：先回忆，再验证</h2>
-    <div class="exercise">
+    <div class="practice">
         <p>运行 Compose 示例后回答下面 4 个问题：</p>
         <ol>
             <li>为什么 Nginx 正确转发 Upgrade 仍然不能解决多实例消息投递？<details class="answer"><summary>查看答案</summary><p>Upgrade 只负责建立连接并选择一个后端节点；session 仍在那个进程的内存里，另一个实例无法直接访问它。</p></details></li>
