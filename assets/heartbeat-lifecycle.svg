@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 380" role="img" aria-labelledby="title desc">
+  <title id="title">WebSocket 心跳、超时和重连流程</title>
+  <desc id="desc">客户端发送应用层心跳，服务端回复 pong；超时后关闭连接，客户端使用退避策略重连。</desc>
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L0,6 L9,3 z" fill="#165d63"/></marker>
+    <style>
+      .label { font: 700 18px system-ui, sans-serif; fill: #17202a; }
+      .small { font: 15px ui-monospace, monospace; fill: #17202a; }
+      .muted { font: 14px system-ui, sans-serif; fill: #5e6b78; }
+      .line { stroke: #b4c6c3; stroke-width: 2; stroke-dasharray: 7 7; }
+      .arrow { stroke: #165d63; stroke-width: 2.5; marker-end: url(#arrow); }
+      .warn { stroke: #a65b2b; stroke-width: 2.5; marker-end: url(#arrow); }
+      .box { fill: #e4f0ee; stroke: #165d63; stroke-width: 2; }
+      .alert { fill: #f4e7dd; stroke: #a65b2b; stroke-width: 2; }
+    </style>
+  </defs>
+  <rect width="900" height="380" fill="#fbfaf7"/>
+  <text x="170" y="35" text-anchor="middle" class="label">客户端</text>
+  <text x="730" y="35" text-anchor="middle" class="label">服务端</text>
+  <line x1="170" y1="55" x2="170" y2="335" class="line"/>
+  <line x1="730" y1="55" x2="730" y2="335" class="line"/>
+  <line x1="190" y1="95" x2="710" y2="95" class="arrow"/>
+  <text x="450" y="82" text-anchor="middle" class="small">{"type":"ping"}</text>
+  <line x1="710" y1="150" x2="190" y2="150" class="arrow"/>
+  <text x="450" y="137" text-anchor="middle" class="small">{"type":"pong"}</text>
+  <rect x="350" y="185" width="200" height="55" rx="5" class="alert"/>
+  <text x="450" y="218" text-anchor="middle" class="label">心跳超时</text>
+  <line x1="710" y1="270" x2="190" y2="270" class="warn"/>
+  <text x="450" y="257" text-anchor="middle" class="small">Close / 清理状态</text>
+  <path d="M190 320 C350 365 550 365 710 320" fill="none" class="arrow"/>
+  <text x="450" y="360" text-anchor="middle" class="muted">客户端退避、加抖动后重连；不要立即无限重试</text>
+</svg>

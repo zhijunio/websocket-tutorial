@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>第 6 课：心跳、断线和安全边界</title>
+    <link rel="stylesheet" href="../assets/styles.css">
+</head>
+<body>
+<main class="page">
+    <p class="kicker">Lesson 0006 · Reliability</p>
+    <h1>心跳、断线和安全边界</h1>
+    <p class="lead">本课的唯一目标：识别连接是否仍然可用，处理断线后的重连，并区分 Origin 校验和身份认证。</p>
+
+    <div class="note">
+        <strong>示例项目：</strong><a href="../examples/index.html#example-0006"><code>examples/0006-heartbeat-reconnect-security</code></a>。它使用 Java 25 + Spring Boot 4.1.1，包含一个本地浏览器页面、服务端应用心跳和开发环境握手令牌。
+    </div>
+
+    <h2>1. 三种“保活”不是一回事</h2>
+    <img src="../assets/heartbeat-lifecycle.svg" alt="应用心跳、超时关闭和退避重连流程图" style="width:100%;height:auto">
+    <table>
+        <thead><tr><th>机制</th><th>所在层</th><th>能回答什么问题</th></tr></thead>
+        <tbody>
+        <tr><td>WebSocket Ping/Pong</td><td>协议控制帧</td><td>对端 WebSocket 栈是否仍能响应。</td></tr>
+        <tr><td>业务心跳</td><td>应用层消息</td><td>应用进程、会话和业务链路是否仍能处理消息。</td></tr>
+        <tr><td>TCP keepalive</td><td>传输层</td><td>网络连接路径是否仍有响应，不代表应用逻辑健康。</td></tr>
+        <tr><td>代理 idle timeout</td><td>基础设施</td><td>网关是否因一段时间没有流量主动关闭连接。</td></tr>
+        </tbody>
+    </table>
+    <p>浏览器 JavaScript WebSocket API 通常不能直接发送协议级 Ping，所以示例使用 <code>{"type":"ping"}</code> 作为应用心跳。应用心跳能覆盖更多业务路径，但也需要定义超时、消息格式和资源成本。</p>
+
+    <h2>2. 源码导读：从握手到心跳</h2>
+    <pre>WebSocketConfig
+    ├─ /ws/heartbeat
+    ├─ Origin = http://localhost:8080
+    └─ DevTokenHandshakeInterceptor
+             ↓ 握手通过
+HeartbeatWebSocketHandler
+    ├─ afterConnectionEstablished → 记录 session / lastActivity
+    ├─ handleTextMessage           → ping → pong
+    ├─ closeIdleSessions           → 超时 Close + 清理
+    └─ afterConnectionClosed       → 删除状态</pre>
+    <p><a href="../examples/0006-heartbeat-reconnect-security/src/main/java/com/example/websocket/DevTokenHandshakeInterceptor.java">握手拦截器</a>只决定连接能否升级；它不处理之后的消息授权。<a href="../examples/0006-heartbeat-reconnect-security/src/main/java/com/example/websocket/HeartbeatWebSocketHandler.java">Handler</a>维护活动时间和消息心跳，但示例中的内存状态只适用于单实例学习环境。</p>
+    <p><a href="../examples/0006-heartbeat-reconnect-security/src/main/resources/static/index.html">浏览器页面</a>在关闭后使用指数退避和随机抖动重连。抖动的目的，是避免大量客户端同时恢复时形成重连风暴。</p>
+
+    <h2>3. Origin 不等于身份认证</h2>
+    <p><code>Origin</code> 说明浏览器页面来自哪个来源，适合限制哪些网页可以发起跨站 WebSocket 连接；它不能说明用户是谁，也不能替代授权检查。</p>
+    <p>示例额外要求查询参数 <code>token=local-dev-token</code>，只是为了让浏览器页面可运行。真实系统应考虑安全 Cookie、短期连接票据、Authorization 代理方案和服务端授权。查询参数可能进入访问日志、代理日志和浏览器历史，不应直接放长期凭证。</p>
+
+    <h2>4. 运行和验证</h2>
+    <pre>cd examples/0006-heartbeat-reconnect-security
+mvn test
+mvn spring-boot:run</pre>
+    <ol>
+        <li>打开 <code>http://localhost:8080/</code>，点击 Connect。</li>
+        <li>观察页面日志，每 5 秒出现一组 ping/pong。</li>
+        <li>停止服务端，观察 close 和退避重连日志。</li>
+        <li>恢复服务端，确认连接最终重新建立。</li>
+        <li>在 DevTools 中删除 token 或从不可信 Origin 发起请求，观察握手被拒绝。</li>
+    </ol>
+
+    <h2>5. 失败案例</h2>
+    <table>
+        <thead><tr><th>现象</th><th>优先检查</th></tr></thead>
+        <tbody>
+        <tr><td>连接刚建立就被拒绝</td><td>检查 Origin、token、握手拦截器和响应状态。</td></tr>
+        <tr><td>服务端认为客户端在线，但消息已无法到达</td><td>检查应用心跳、代理 idle timeout 和最后活动时间。</td></tr>
+        <tr><td>服务恢复后大量客户端同时请求</td><td>检查重连是否有指数退避、随机抖动和上限。</td></tr>
+        <tr><td>断开后在线人数不下降</td><td>检查底层关闭回调是否清理 session 状态，不能只依赖 Close 帧。</td></tr>
+        </tbody>
+    </table>
+
+    <h2>6. 练习：先回忆，再验证</h2>
+    <div class="exercise">
+        <p>运行示例后回答下面 4 个问题：</p>
+        <ol>
+            <li>
+                为什么同时需要心跳超时和底层连接关闭回调？
+                <details class="answer">
+                    <summary>查看答案</summary>
+                    <p>正常关闭可能触发回调，但断网、进程崩溃或代理异常未必完成 Close 握手；心跳超时提供最终判定，关闭回调负责及时清理已知的断开连接。</p>
+                </details>
+            </li>
+            <li>
+                为什么 Origin 校验不能替代身份认证？
+                <details class="answer">
+                    <summary>查看答案</summary>
+                    <p>Origin 只描述浏览器页面来源，不证明用户身份、权限或租户。服务端仍需要 Cookie、短期票据或其他认证机制，并在业务操作上做授权检查。</p>
+                </details>
+            </li>
+            <li>
+                为什么重连需要退避和抖动？
+                <details class="answer">
+                    <summary>查看答案</summary>
+                    <p>服务故障时客户端可能同时断开；立即重连会形成重连风暴，进一步压垮服务。退避降低频率，抖动打散同一时刻的请求。</p>
+                </details>
+            </li>
+            <li>
+                为什么示例中的查询参数 token 不能直接作为生产方案？
+                <details class="answer">
+                    <summary>查看答案</summary>
+                    <p>查询参数可能出现在 URL、代理日志和访问日志中，长期凭证容易泄露。生产环境应使用安全 Cookie、短期连接票据或经过设计的 Authorization 方案。</p>
+                </details>
+            </li>
+        </ol>
+    </div>
+
+    <div class="quiz" data-quiz>
+        <p><strong>快速检查：</strong>Origin 校验主要解决什么问题？</p>
+        <button data-correct="false">证明用户拥有管理员权限</button>
+        <button data-correct="true">限制哪些网页可以发起连接</button>
+        <button data-correct="false">保证消息一定不会丢失</button>
+        <p class="feedback" aria-live="polite"></p>
+    </div>
+
+    <nav class="lesson-nav" aria-label="课程导航">
+        <a href="0005-multi-room-chat.html">← 上一课：多房间聊天与广播</a>
+        <a class="next" href="0007-push-notifications-and-replay.html">下一课：推送通知与补拉 →</a>
+    </nav>
+
+    <h2>本课参考</h2>
+    <ul>
+        <li><a href="../reference/rfc6455-04-data-lifecycle-and-errors.html">参考文档：RFC 6455 §6-§8 收发、关闭与错误</a></li>
+        <li><a href="https://www.rfc-editor.org/rfc/rfc6455#section-5.5.2">RFC 6455 §5.5.2：Ping</a></li>
+        <li><a href="https://developer.mozilla.org/en-US/docs/Web/API/WebSocket/readyState">MDN WebSocket.readyState</a></li>
+        <li><a href="https://docs.spring.io/spring-framework/reference/web/websocket/server.html">Spring WebSocket Interceptors</a></li>
+        <li><a href="../examples/index.html#example-0006">本课独立示例</a></li>
+    </ul>
+
+    <p class="footer">完成心跳、重启后的重连和错误握手验证后，把日志与答案发给我。下一课将处理在线推送、离线未读标记和补拉。</p>
+</main>
+<script src="../assets/quiz.js" defer></script>
+</body>
+</html>

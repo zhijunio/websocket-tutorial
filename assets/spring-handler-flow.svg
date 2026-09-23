@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 230" role="img" aria-labelledby="title desc">
+  <title id="title">Spring WebSocket Handler 调用链</title>
+  <desc id="desc">浏览器连接经过配置路由、Handler 和 session 发送消息。</desc>
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L0,6 L9,3 z" fill="#165d63"/></marker>
+    <style>
+      .box { fill: #e4f0ee; stroke: #165d63; stroke-width: 2; }
+      .label { font: 700 17px system-ui, sans-serif; fill: #17202a; }
+      .small { font: 14px ui-monospace, monospace; fill: #17202a; }
+      .arrow { stroke: #165d63; stroke-width: 2.5; marker-end: url(#arrow); }
+      .muted { font: 14px system-ui, sans-serif; fill: #5e6b78; }
+    </style>
+  </defs>
+  <rect width="900" height="230" fill="#fbfaf7"/>
+  <rect x="25" y="75" width="170" height="70" rx="5" class="box"/>
+  <rect x="250" y="75" width="235" height="70" rx="5" class="box"/>
+  <rect x="540" y="75" width="180" height="70" rx="5" class="box"/>
+  <rect x="775" y="75" width="100" height="70" rx="5" class="box"/>
+  <text x="110" y="104" text-anchor="middle" class="label">浏览器</text>
+  <text x="110" y="126" text-anchor="middle" class="small">/ws/echo</text>
+  <text x="367" y="104" text-anchor="middle" class="label">WebSocketConfig</text>
+  <text x="367" y="126" text-anchor="middle" class="small">path → handler</text>
+  <text x="630" y="104" text-anchor="middle" class="label">TextWebSocketHandler</text>
+  <text x="630" y="126" text-anchor="middle" class="small">handleTextMessage</text>
+  <text x="825" y="104" text-anchor="middle" class="label">Session</text>
+  <text x="825" y="126" text-anchor="middle" class="small">sendMessage</text>
+  <line x1="195" y1="110" x2="245" y2="110" class="arrow"/>
+  <line x1="485" y1="110" x2="535" y2="110" class="arrow"/>
+  <line x1="720" y1="110" x2="770" y2="110" class="arrow"/>
+  <text x="450" y="190" text-anchor="middle" class="muted">握手和路径由配置层处理，已建立连接的文本消息由 Handler 处理</text>
+</svg>

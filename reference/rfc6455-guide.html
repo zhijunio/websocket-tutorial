@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>RFC 6455 WebSocket 协议导读</title>
+    <link rel="stylesheet" href="../assets/styles.css">
+</head>
+<body>
+<main class="page">
+    <p class="kicker">Reference · RFC 6455</p>
+    <h1>RFC 6455：WebSocket 协议导读</h1>
+    <p class="lead">RFC 6455 是 WebSocket 的核心协议规范。它规定握手、帧、掩码、控制帧、关闭、扩展和安全边界；它不规定 Spring、Tomcat 或业务消息如何实现。</p>
+
+    <div class="note">
+        <strong>阅读目标：</strong>看到一条 WebSocket 请求或一段帧数据时，能回到 RFC 的对应章节，判断协议行为是否正确，并区分标准要求与框架、代理和业务系统行为。
+    </div>
+
+    <h2>1. RFC 6455 是什么</h2>
+    <table>
+        <thead><tr><th>项目</th><th>内容</th></tr></thead>
+        <tbody>
+        <tr><td>标题</td><td>The WebSocket Protocol</td></tr>
+        <tr><td>发布组织</td><td>IETF</td></tr>
+        <tr><td>发布时间</td><td>2011 年 12 月</td></tr>
+        <tr><td>作者</td><td>Ian Fette、Alexey Melnikov</td></tr>
+        <tr><td>类别</td><td>Standards Track</td></tr>
+        <tr><td>协议基础</td><td>Opening Handshake + TCP 上的 WebSocket 帧</td></tr>
+        </tbody>
+    </table>
+    <p>RFC 摘要把 WebSocket 描述为：让受控环境中的不可信客户端代码与远端主机进行双向通信，并使用浏览器常见的 Origin 安全模型。它的目标是减少依赖 XMLHttpRequest、iframe 或长轮询建立多个 HTTP 连接的需要。</p>
+
+    <h2>2. 协议整体模型</h2>
+    <pre>浏览器 / WebSocket 客户端
+        │
+        │  HTTP Opening Handshake
+        │  Upgrade: websocket
+        │  101 Switching Protocols
+        ▼
+同一条 TCP 连接上的 WebSocket 协议
+        │
+        ├── 数据帧：Text / Binary / Continuation
+        ├── 控制帧：Ping / Pong / Close
+        └── 可选扩展和应用层子协议：例如 permessage-deflate、STOMP</pre>
+    <p>握手成功后，连接不再按普通 HTTP 的“请求—响应”模型处理。客户端和服务端都可以主动发送 WebSocket 消息；具体的业务语义仍由应用层协议决定。</p>
+
+    <h2>3. 重点章节速查</h2>
+    <table>
+        <thead><tr><th>章节</th><th>主题</th><th>在本课程中的用途</th></tr></thead>
+        <tbody>
+        <tr><td><a href="https://www.rfc-editor.org/rfc/rfc6455#section-1.1">§1.1</a></td><td>Background</td><td>理解轮询、长轮询到 WebSocket 的发展背景。</td></tr>
+        <tr><td><a href="https://www.rfc-editor.org/rfc/rfc6455#section-1.2">§1.2</a>、<a href="https://www.rfc-editor.org/rfc/rfc6455#section-1.7">§1.7</a></td><td>Protocol Overview、TCP/HTTP 关系</td><td>建立协议分层模型，理解 Upgrade 之后发生了什么。</td></tr>
+        <tr><td><a href="https://www.rfc-editor.org/rfc/rfc6455#section-3">§3</a></td><td>WebSocket URI</td><td>区分 <code>ws://</code> 与 <code>wss://</code>，理解默认端口和 TLS。</td></tr>
+        <tr><td><a href="https://www.rfc-editor.org/rfc/rfc6455#section-4">§4</a></td><td>Opening Handshake</td><td>排查 101、Upgrade、Key、Accept 和版本问题。</td></tr>
+        <tr><td><a href="https://www.rfc-editor.org/rfc/rfc6455#section-5">§5</a></td><td>Data Framing</td><td>理解 FIN、opcode、MASK、Payload length、分片和控制帧。</td></tr>
+        <tr><td><a href="https://www.rfc-editor.org/rfc/rfc6455#section-7">§7</a></td><td>Closing the Connection</td><td>理解关闭握手、异常断开和 close code。</td></tr>
+        <tr><td><a href="https://www.rfc-editor.org/rfc/rfc6455#section-9">§9</a></td><td>Extensions</td><td>理解 <code>Sec-WebSocket-Extensions</code> 和压缩协商。</td></tr>
+        <tr><td><a href="https://www.rfc-editor.org/rfc/rfc6455#section-10">§10</a></td><td>Security Considerations</td><td>区分 Origin、客户端认证、TLS、掩码和实现限制。</td></tr>
+        </tbody>
+    </table>
+
+    <h2>4. Opening Handshake</h2>
+    <pre>GET /chat HTTP/1.1
+Host: example.com
+Upgrade: websocket
+Connection: Upgrade
+Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==
+Sec-WebSocket-Version: 13
+
+HTTP/1.1 101 Switching Protocols
+Upgrade: websocket
+Connection: Upgrade
+Sec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=</pre>
+    <table>
+        <thead><tr><th>字段</th><th>协议职责</th><th>不能把它当成什么</th></tr></thead>
+        <tbody>
+        <tr><td><code>Upgrade</code> / <code>Connection</code></td><td>声明并确认 HTTP 协议升级。</td><td>不是业务消息。</td></tr>
+        <tr><td><code>Sec-WebSocket-Key</code></td><td>客户端为本次握手生成的随机挑战值。</td><td>不是登录凭证，也不是授权结果。</td></tr>
+        <tr><td><code>Sec-WebSocket-Accept</code></td><td>服务端根据 Key 和固定 GUID 计算出的握手确认值。</td><td>不是用户身份认证。</td></tr>
+        <tr><td><code>101 Switching Protocols</code></td><td>表示 HTTP 层协议切换成功。</td><td><code>200</code> 不能替代它。</td></tr>
+        </tbody>
+    </table>
+    <p>Accept 的计算规则是：</p>
+    <pre>Base64(SHA-1(Sec-WebSocket-Key +
+               "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"))</pre>
+    <p>服务端还需要按 RFC 检查请求方法、HTTP 版本、Host、Upgrade、Connection、版本和 Key 等条件。应用层鉴权则应通过 Cookie、Authorization、短期票据或其他明确机制完成。</p>
+
+    <h2>5. 数据帧和控制帧</h2>
+    <p>RFC 6455 把 WebSocket 数据组织为帧。一个业务消息可能由一个帧组成，也可能因为分片由多个帧组成。</p>
+    <ul>
+        <li><code>FIN</code>：是否是消息的最后一帧。</li>
+        <li><code>opcode</code>：文本、二进制、Continuation、Close、Ping 或 Pong。</li>
+        <li><code>MASK</code>：客户端发往服务端的帧必须掩码，服务端发往客户端的帧不应掩码。</li>
+        <li><code>Payload length</code>：Payload 长度，较长内容使用扩展长度字段。</li>
+        <li>控制帧不能分片，Payload 长度不能超过 125 字节。</li>
+    </ul>
+    <p>掩码是协议要求的异或变换，不是加密，也不是认证。需要保密性和完整性时，应使用 TLS，即 <code>wss://</code>。</p>
+
+    <h2>6. 关闭和安全</h2>
+    <p>正常关闭通常包含 Close 帧的交换；异常断网、进程崩溃或代理超时可能来不及完成关闭握手，所以服务端仍必须根据底层断开、超时和心跳结果清理会话。</p>
+    <table>
+        <thead><tr><th>主题</th><th>RFC 关注点</th><th>工程实现还要补充什么</th></tr></thead>
+        <tbody>
+        <tr><td>Origin</td><td>浏览器来源信息和跨站请求风险。</td><td>允许来源列表、环境配置和拒绝日志。</td></tr>
+        <tr><td>认证</td><td>客户端身份认证是应用设计问题。</td><td>Cookie/Token 验证、过期、授权和最小权限。</td></tr>
+        <tr><td>TLS</td><td><code>wss://</code> 提供连接保密性和完整性。</td><td>证书、终止位置、代理转发和内部链路策略。</td></tr>
+        <tr><td>资源限制</td><td>实现可以设置消息、连接等限制。</td><td>有界队列、背压、限流、超时和监控。</td></tr>
+        </tbody>
+    </table>
+
+    <h2>7. RFC 与实现的边界</h2>
+    <table>
+        <thead><tr><th>层次</th><th>主要职责</th></tr></thead>
+        <tbody>
+        <tr><td>RFC 6455</td><td>握手、帧、掩码、控制帧、关闭、扩展和协议错误。</td></tr>
+        <tr><td>浏览器 WebSocket API</td><td><code>new WebSocket()</code>、<code>send()</code>、事件和 <code>readyState</code>。</td></tr>
+        <tr><td>Spring/Tomcat/Jakarta</td><td>端点注册、连接回调、消息处理和容器实现。</td></tr>
+        <tr><td>Nginx/网关</td><td>Upgrade 转发、TLS、idle timeout 和连接路由。</td></tr>
+        <tr><td>业务系统</td><td>房间、广播、鉴权、离线消息、幂等、多实例路由和背压。</td></tr>
+        </tbody>
+    </table>
+    <p>排错时先问“违反了哪一层的契约”：101 之前优先看握手和代理；101 之后再看帧、生命周期和业务协议。不能用 Spring 注解行为替代 RFC 对线上的实际判断。</p>
+
+    <h2>8. 推荐阅读顺序</h2>
+    <ol>
+        <li><a href="rfc6455-01-introduction.html">先读 §1.1、§1.2 和 §1.7</a>，建立背景和分层模型。</li>
+        <li><a href="rfc6455-02-uri-and-handshake.html">对照 DevTools 的一条请求阅读 §3、§4.1 和 §4.2.2</a>。</li>
+        <li><a href="rfc6455-03-data-framing.html">再读 §5.2、§5.3、§5.5</a>，连接第一课和第二课的帧内容。</li>
+        <li><a href="rfc6455-04-data-lifecycle-and-errors.html">再读 §6-§8</a>，理解收发、关闭、异常重连和错误处理。</li>
+        <li><a href="rfc6455-05-extensions-and-security.html">最后读 §9 和 §10</a>，补齐扩展和安全边界。</li>
+        <li><a href="rfc6455-06-iana-and-usage.html">再读 §11-§14</a>，理解注册表、子协议复用方式和参考文献边界。</li>
+    </ol>
+
+    <h2>官方链接</h2>
+    <ul>
+        <li><a href="https://www.rfc-editor.org/info/rfc6455/">RFC Editor：RFC 6455 信息页</a></li>
+        <li><a href="https://www.rfc-editor.org/rfc/rfc6455">RFC 6455 HTML 正文</a></li>
+        <li><a href="https://www.rfc-editor.org/rfc/rfc6455.txt">RFC 6455 纯文本正文</a></li>
+        <li><a href="rfc6455-01-introduction.html">详细解析一：§1 背景、模型与分层</a></li>
+        <li><a href="rfc6455-02-uri-and-handshake.html">详细解析二：§3-§4 URI 与 Opening Handshake</a></li>
+        <li><a href="rfc6455-03-data-framing.html">详细解析三：§5 数据帧与控制帧</a></li>
+        <li><a href="rfc6455-04-data-lifecycle-and-errors.html">详细解析四：§6-§8 收发、关闭与错误</a></li>
+        <li><a href="rfc6455-05-extensions-and-security.html">详细解析五：§9-§10 扩展与安全</a></li>
+        <li><a href="rfc6455-06-iana-and-usage.html">详细解析六：§11-§14 注册表、复用与参考文献</a></li>
+        <li><a href="../lessons/0001-opening-handshake-and-devtools.html">回到第一课：Opening Handshake 与 DevTools</a></li>
+        <li><a href="websocket-basics.html">WebSocket 基础速查</a></li>
+    </ul>
+</main>
+</body>
+</html>

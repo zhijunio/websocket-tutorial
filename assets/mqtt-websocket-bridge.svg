@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 300" role="img" aria-labelledby="title desc">
+  <title id="title">MQTT Broker 到 Java 后端到 WebSocket 客户端的桥接</title>
+  <desc id="desc">设备事件进入 MQTT Broker，Java 后端订阅并按 deviceId 路由到 WebSocket 客户端，HTTP 命令反向发布到 MQTT。</desc>
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L0,6 L9,3 z" fill="#165d63"/></marker>
+    <style>
+      .box { fill: #e4f0ee; stroke: #165d63; stroke-width: 2; }
+      .label { font: 700 18px system-ui, sans-serif; fill: #17202a; }
+      .small { font: 14px ui-monospace, monospace; fill: #17202a; }
+      .muted { font: 14px system-ui, sans-serif; fill: #5e6b78; }
+      .arrow { stroke: #165d63; stroke-width: 2.5; marker-end: url(#arrow); }
+      .back { stroke: #a65b2b; stroke-width: 2.5; marker-end: url(#arrow); }
+    </style>
+  </defs>
+  <rect width="1000" height="300" fill="#fbfaf7"/>
+  <rect x="35" y="100" width="200" height="80" rx="6" class="box"/>
+  <rect x="400" y="100" width="220" height="80" rx="6" class="box"/>
+  <rect x="785" y="100" width="180" height="80" rx="6" class="box"/>
+  <text x="135" y="133" text-anchor="middle" class="label">MQTT Broker</text>
+  <text x="135" y="157" text-anchor="middle" class="small">devices/+/events</text>
+  <text x="510" y="133" text-anchor="middle" class="label">Java Bridge</text>
+  <text x="510" y="157" text-anchor="middle" class="small">Paho / Spring Integration</text>
+  <text x="875" y="133" text-anchor="middle" class="label">WebSocket</text>
+  <text x="875" y="157" text-anchor="middle" class="small">browser client</text>
+  <line x1="240" y1="130" x2="395" y2="130" class="arrow"/>
+  <text x="318" y="117" text-anchor="middle" class="muted">subscribe / event</text>
+  <line x1="625" y1="130" x2="780" y2="130" class="arrow"/>
+  <text x="702" y="117" text-anchor="middle" class="muted">route by deviceId</text>
+  <path d="M780 205 C600 270 410 270 240 205" fill="none" class="back"/>
+  <text x="510" y="265" text-anchor="middle" class="muted">HTTP command → devices/{deviceId}/commands</text>
+</svg>

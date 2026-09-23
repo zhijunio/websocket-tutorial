@@ -1,0 +1,4 @@
+mqtt:
+  enabled: ${MQTT_ENABLED:false}
+  broker-url: ${MQTT_BROKER_URL:tcp://localhost:1883}
+  client-id: ${MQTT_CLIENT_ID:websocket-bridge}

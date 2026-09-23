@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>websocket-tutorial · WebSocket 学习课程</title>
+    <link rel="stylesheet" href="assets/styles.css">
+</head>
+<body>
+<main class="page">
+    <p class="kicker">websocket-tutorial · Java 25 · Spring Boot 4.1.1 · RFC 6455</p>
+    <h1>WebSocket 学习课程</h1>
+    <p class="lead">从 TCP、HTTP 和 Opening Handshake 开始，逐步完成 Spring Boot、Jakarta、STOMP、MQTT、多实例和性能基准练习。</p>
+
+    <div class="note">
+        <strong>学习方式：</strong>每课只聚焦一个核心能力。先回答问题，再运行示例、抓包或测量，最后用验证证据确认是否真正掌握。
+    </div>
+
+    <img src="assets/connection-models.svg" alt="轮询、长轮询与 WebSocket 连接模型对比图" style="width:100%;height:auto">
+
+    <h2 id="lessons">课程</h2>
+    <table>
+        <thead><tr><th>课程</th><th>核心能力</th><th>示例</th></tr></thead>
+        <tbody>
+        <tr><td><a href="lessons/0001-opening-handshake-and-devtools.html">0001 · Opening Handshake 与 DevTools</a></td><td>理解发展背景，识别 101、Upgrade 和 Sec-WebSocket-*。</td><td>协议与抓包</td></tr>
+        <tr><td><a href="lessons/0002-frames-and-connection-lifecycle.html">0002 · WebSocket 帧与连接生命周期</a></td><td>理解帧、消息、控制帧、掩码和 Close。</td><td>协议与抓包</td></tr>
+        <tr><td><a href="lessons/0003-spring-boot-websocket-echo.html">0003 · Spring Boot 双向消息</a></td><td>使用原生 Handler 实现回显并验证真实握手。</td><td><a href="examples/index.html#example-0003">独立项目</a></td></tr>
+        <tr><td><a href="lessons/0004-jakarta-server-endpoint.html">0004 · Jakarta @ServerEndpoint 对照</a></td><td>比较 Jakarta 标准 API 与 Spring 编程模型。</td><td><a href="examples/index.html#example-0004">独立项目</a></td></tr>
+        <tr><td><a href="lessons/0005-multi-room-chat.html">0005 · 多房间聊天与广播</a></td><td>建立房间状态、广播和断开清理不变量。</td><td><a href="examples/index.html#example-0005">G1 初版</a></td></tr>
+        <tr><td><a href="lessons/0006-heartbeat-reconnect-security.html">0006 · 心跳、断线和安全边界</a></td><td>处理应用心跳、Origin、鉴权和退避重连。</td><td><a href="examples/index.html#example-0006">独立项目</a></td></tr>
+        <tr><td><a href="lessons/0007-push-notifications-and-replay.html">0007 · 推送通知与补拉</a></td><td>实现在线推送、未读通知和 ACK。</td><td><a href="examples/index.html#example-0007">G2 初版</a></td></tr>
+        <tr><td><a href="lessons/0008-proxy-and-multi-instance.html">0008 · 代理、网关和多实例</a></td><td>理解 idle timeout、连接归属和跨实例路由。</td><td><a href="examples/index.html#example-0008">Docker Compose</a></td></tr>
+        <tr><td><a href="lessons/0009-stomp-websocket.html">0009 · STOMP over WebSocket</a></td><td>理解 CONNECT、SUBSCRIBE、SEND、MESSAGE 和目的地路由。</td><td><a href="examples/index.html#example-0009">独立项目</a></td></tr>
+        <tr><td><a href="lessons/0010-mqtt-websocket-bridge.html">0010 · MQTT 桥接</a></td><td>完成 MQTT Broker、Java 后端和 WebSocket 客户端桥接。</td><td><a href="examples/index.html#example-0010">Docker Compose</a></td></tr>
+        <tr><td><a href="lessons/0011-high-frequency-benchmark.html">0011 · 高频小消息基准</a></td><td>测量 100 客户端、吞吐、p50/p95、错误率和资源。</td><td><a href="examples/index.html#example-0011">G3 基准</a></td></tr>
+        <tr><td><a href="lessons/0012-final-assessment-and-interview.html">0012 · 结业验收与面试演练</a></td><td>用协议、代码、指标和架构权衡完成验收。</td><td>G1/G2/G3</td></tr>
+        </tbody>
+    </table>
+
+    <h2 id="references">参考资料</h2>
+    <ul>
+        <li><a href="reference/rfc6455-guide.html">RFC 6455 总导读</a></li>
+        <li><a href="reference/rfc6455-01-introduction.html">详细解析一：背景、模型与分层</a></li>
+        <li><a href="reference/rfc6455-02-uri-and-handshake.html">详细解析二：URI 与 Opening Handshake</a></li>
+        <li><a href="reference/rfc6455-03-data-framing.html">详细解析三：数据帧与控制帧</a></li>
+        <li><a href="reference/rfc6455-04-data-lifecycle-and-errors.html">详细解析四：收发、关闭与错误</a></li>
+        <li><a href="reference/rfc6455-05-extensions-and-security.html">详细解析五：扩展与安全</a></li>
+        <li><a href="reference/rfc6455-06-iana-and-usage.html">详细解析六：注册表、复用与参考文献</a></li>
+        <li><a href="reference/websocket-basics.html">WebSocket 基础速查</a></li>
+    </ul>
+
+    <h2 id="mission">学习目标</h2>
+    <p>目标是能解释协议差异、读懂并排查握手、完成 Java 实现，并交付 G1 多房间聊天、G2 推送通知和 G3 高频小消息基准。完整约束与验收标准见仓库中的 <a href="MISSION.md">MISSION.md</a>。</p>
+
+    <h2 id="curriculum">仓库文档</h2>
+    <ul>
+        <li><a href="CURRICULUM.md">课程大纲 Markdown</a></li>
+        <li><a href="RESOURCES.md">资源清单 Markdown</a></li>
+        <li><a href="examples/index.html">示例项目索引</a></li>
+    </ul>
+    <p class="footer">GitHub Pages 负责展示课程 HTML、CSS、JavaScript 和 SVG。Spring Boot、Maven、Docker 示例需要克隆仓库后在本地运行。</p>
+</main>
+</body>
+</html>

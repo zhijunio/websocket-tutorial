@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>RFC 6455 §6-§8 导读：收发、关闭与错误</title>
+    <link rel="stylesheet" href="../assets/styles.css">
+</head>
+<body>
+<main class="page">
+    <p class="kicker">Reference · RFC 6455 §6-§8</p>
+    <h1>RFC 6455 §6-§8：数据收发、关闭与错误</h1>
+    <p class="lead">本篇把连接建立后的运行时行为补完整：如何发送和接收一条消息，如何完成 Closing Handshake，如何区分正常关闭、异常断开和协议失败，以及为什么重连必须使用退避。</p>
+
+    <div class="note">
+        <strong>状态主线：</strong><code>OPEN</code> 可以交换数据；发送或收到 Close 后进入 <code>CLOSING</code>；底层 TCP 关闭后进入 <code>CLOSED</code>。没有收到 Close 就断开时，应用通常看到的是异常关闭语义，而不是一个可在线发送的 1006。
+    </div>
+
+    <h2>1. §6.1 发送数据</h2>
+    <p>RFC 的发送算法从一个前提开始：连接必须处于 <code>OPEN</code>。如果发送过程中连接状态发生变化，发送方必须中止剩余步骤。</p>
+    <ol>
+        <li>确认 WebSocket 连接处于 <code>OPEN</code>。</li>
+        <li>把数据封装成一个 WebSocket 帧，或在数据很大/尚未完整生成时封装成多个分片帧。</li>
+        <li>第一帧使用 Text 或 Binary opcode。</li>
+        <li>最后一帧设置 <code>FIN=1</code>。</li>
+        <li>如果由客户端发送，所有帧都必须掩码。</li>
+        <li>如果协商了扩展，按扩展定义处理额外数据和语义。</li>
+        <li>把形成的帧写入底层网络连接。</li>
+    </ol>
+    <p>这条规则的工程含义是：业务层的“发送消息”不能绕过 WebSocket 帧编码器直接写字符串或 JSON 到 TCP。框架会替你完成编码，但发送前仍要处理连接状态、发送顺序、队列上限和慢客户端。</p>
+
+    <h2>2. §6.2 接收数据</h2>
+    <p>接收方从底层连接读取字节，并必须按 §5.2 解析为 WebSocket 帧：</p>
+    <pre>TCP 字节流
+    ↓
+帧解析：FIN / RSV / opcode / MASK / length / payload
+    ├── 控制帧：Close / Ping / Pong，立即按 §5.5 处理
+    └── 数据帧：Text / Binary，按 FIN 和 Continuation 重组
+    ↓
+完整 WebSocket Message
+    ↓
+业务处理器：JSON / STOMP / 自定义协议</pre>
+    <table>
+        <thead><tr><th>输入</th><th>接收动作</th><th>应用可见结果</th></tr></thead>
+        <tbody>
+        <tr><td>未分片数据帧</td><td>读取 opcode 和 Application data。</td><td>立即形成一条完整消息。</td></tr>
+        <tr><td>分片首帧</td><td>记录消息类型，等待 Continuation。</td><td>暂时不应当作完整业务消息。</td></tr>
+        <tr><td>Continuation</td><td>按发送顺序拼接 Application data。</td><td>直到最后一帧 FIN=1 才形成完整消息。</td></tr>
+        <tr><td>控制帧</td><td>按 Close/Ping/Pong 规则处理，可插入分片消息之间。</td><td>不改变正在重组的数据消息边界。</td></tr>
+        </tbody>
+    </table>
+    <p>扩展可以改变 Payload 的解释、消息边界或 Application data 的内容，所以通用中间件只有在理解已协商扩展时，才可以安全地改写或合并帧。</p>
+
+    <h2>3. §7.1 关闭状态机</h2>
+    <pre>CONNECTING ── 握手通过 ──→ OPEN
+                                │
+                   发送或收到 Close
+                                ↓
+                           CLOSING
+                                │
+                       TCP 连接已关闭
+                                ↓
+                           CLOSED</pre>
+    <table>
+        <thead><tr><th>状态/事件</th><th>RFC 语义</th><th>实现动作</th></tr></thead>
+        <tbody>
+        <tr><td><code>OPEN</code></td><td>可以发送和接收数据。</td><td>允许业务消息，维护连接和发送队列。</td></tr>
+        <tr><td>发送 Close</td><td>Closing Handshake 开始，进入 <code>CLOSING</code>。</td><td>停止发送新的数据帧。</td></tr>
+        <tr><td>收到 Close</td><td>如果此前没有发送 Close，必须回复 Close。</td><td>尽快回复并停止新的业务发送。</td></tr>
+        <tr><td>双方收发 Close</td><td>应关闭底层 TCP 连接。</td><td>释放连接、定时器、队列和业务索引。</td></tr>
+        <tr><td>TCP 已关闭</td><td>进入 <code>CLOSED</code>；关闭握手完成才算 cleanly closed。</td><td>触发最终清理和重连判定。</td></tr>
+        </tbody>
+    </table>
+    <p>Close 帧交换和 TCP 关闭是两个相关但不同的动作：Close 表示 WebSocket 协议层的意图；TCP FIN/RST 表示传输层连接结束。异常断网时可能只看到后者。</p>
+
+    <h2>4. §7.1.2-§7.1.7 关闭、失败与清理</h2>
+    <h3>4.1 正常关闭</h3>
+    <p>开始 Closing Handshake 时发送一个 Close 控制帧，可包含状态码和 UTF-8 reason。发送方收到对端 Close 后，应关闭底层连接。应用在发送 Close 后不能再发送数据帧。</p>
+
+    <h3>4.2 Fail the WebSocket Connection</h3>
+    <p>当 RFC 要求连接失败时，客户端必须关闭底层连接；服务端也必须关闭连接，并且应该记录问题。如果连接已经建立，端点通常应先发送合适的 Close 帧，再关闭 TCP；但如果对端很可能无法处理 Close，例如严重协议错误或攻击场景，可以直接关闭。</p>
+    <p>失败后不能继续处理来自对端的数据，也不能继续尝试响应后续 Close。服务端日志应记录协议错误、连接标识、方向和 close code，但不能记录敏感 Token。</p>
+
+    <h3>4.3 Close code 的来源</h3>
+    <p>RFC 定义的“连接关闭码”是应用收到的第一个 Close 帧中的状态码。双方几乎同时关闭时，两端看到的关闭码可能不同，因为各自先收到的 Close 帧可能来自不同方向。</p>
+    <table>
+        <thead><tr><th>代码</th><th>含义</th><th>是否可放进 Close 帧</th></tr></thead>
+        <tbody>
+        <tr><td><code>1000</code></td><td>正常关闭。</td><td>可以</td></tr>
+        <tr><td><code>1001</code></td><td>Going Away，例如服务端下线或页面离开。</td><td>可以</td></tr>
+        <tr><td><code>1002</code></td><td>协议错误。</td><td>可以</td></tr>
+        <tr><td><code>1003</code></td><td>收到无法接受的数据类型。</td><td>可以</td></tr>
+        <tr><td><code>1005</code></td><td>表示没有收到状态码。</td><td><strong>不能发送</strong>，仅供本地表示</td></tr>
+        <tr><td><code>1006</code></td><td>异常关闭，没有完成 Close 帧交换。</td><td><strong>不能发送</strong>，仅供本地表示</td></tr>
+        <tr><td><code>1007</code></td><td>消息数据不符合类型要求，例如无效 UTF-8。</td><td>可以</td></tr>
+        <tr><td><code>1008</code></td><td>违反策略的消息。</td><td>可以</td></tr>
+        <tr><td><code>1009</code></td><td>消息过大，无法处理。</td><td>可以</td></tr>
+        <tr><td><code>1010</code></td><td>客户端期望的扩展没有被服务端协商。</td><td>客户端可以发送</td></tr>
+        <tr><td><code>1011</code></td><td>服务端遇到阻止其完成请求的意外条件。</td><td>服务端可以发送</td></tr>
+        <tr><td><code>1015</code></td><td>TLS 握手失败的本地表示。</td><td><strong>不能发送</strong>，仅供本地表示</td></tr>
+        </tbody>
+    </table>
+    <p>扩展、框架和应用可以使用 <code>3000-3999</code>；应用之间约定的私有状态码使用 <code>4000-4999</code>。这些代码的具体语义不是 RFC 6455 自动定义的，必须写进消息协议和故障手册。</p>
+
+    <h2>5. §7.2 异常关闭与重连</h2>
+    <p>异常关闭可能来自网络瞬断、代理超时、服务端崩溃、TLS 问题、协议错误或资源限制。RFC 明确警告：如果所有客户端在同一时间立即、持续重连，恢复过程会变成对服务端的拒绝服务压力。</p>
+    <h3>5.1 推荐的重连策略</h3>
+    <ol>
+        <li>先判断关闭原因是否值得重连：认证失败、授权拒绝和协议错误通常不能盲目重试。</li>
+        <li>第一次重连加入随机延迟；RFC 给出的合理示例是 0 到 5 秒之间随机选择。</li>
+        <li>后续失败使用逐步增加的延迟，例如截断二进制指数退避。</li>
+        <li>加入最大重试次数、最大延迟、抖动和手动恢复入口。</li>
+        <li>重连成功后恢复订阅、房间和离线消息游标，但不要重复创建旧连接的定时器。</li>
+    </ol>
+    <pre>delay = min(maxDelay, baseDelay * 2^attempt) + randomJitter</pre>
+    <p>RFC 6455 建议使用退避，但没有规定具体的最大延迟、重试次数或业务恢复语义。序列号、补拉、幂等和订阅恢复属于应用层设计。</p>
+
+    <h2>6. §8 错误处理与 UTF-8</h2>
+    <p>当端点需要把字节流解释为 UTF-8，却发现字节流不是合法 UTF-8 时，必须使 WebSocket 连接失败。这条规则同时适用于握手期间和后续数据交换。</p>
+    <table>
+        <thead><tr><th>错误</th><th>典型处理</th><th>可能 close code</th></tr></thead>
+        <tbody>
+        <tr><td>客户端到服务端帧未掩码</td><td>服务端关闭连接，可发送协议错误。</td><td><code>1002</code></td></tr>
+        <tr><td>未知 opcode 或非法帧</td><td>停止继续解析并失败连接。</td><td><code>1002</code></td></tr>
+        <tr><td>文本消息无效 UTF-8</td><td>失败连接，不把损坏文本交给业务层。</td><td><code>1007</code></td></tr>
+        <tr><td>消息超过实现限制</td><td>拒绝或关闭，保护内存和队列。</td><td><code>1009</code></td></tr>
+        <tr><td>策略拒绝</td><td>拒绝不允许的业务消息或来源。</td><td><code>1008</code></td></tr>
+        </tbody>
+    </table>
+    <p>框架可能把协议错误转换为异常、回调或日志；应用应确认这些事件最终会清理会话状态，而不是只记录异常后留下房间成员、订阅或发送队列。</p>
+
+    <h2>7. 与浏览器和 Spring 的对应关系</h2>
+    <table>
+        <thead><tr><th>RFC 概念</th><th>浏览器侧常见表现</th><th>Spring/服务端实现关注点</th></tr></thead>
+        <tbody>
+        <tr><td><code>OPEN</code></td><td><code>readyState === WebSocket.OPEN</code>。</td><td>允许发送，连接注册到会话索引。</td></tr>
+        <tr><td><code>CLOSING</code></td><td>调用 <code>close()</code> 后进入关闭过程。</td><td>停止业务发送，回复/发送 Close。</td></tr>
+        <tr><td><code>CLOSED</code></td><td><code>onclose</code> 回调，得到 close code。</td><td>清理 session、房间、订阅、定时器和队列。</td></tr>
+        <tr><td>异常关闭</td><td>可能看到 1006 或连接错误。</td><td>检查代理、TCP、TLS、心跳和服务端日志。</td></tr>
+        <tr><td>背压/慢客户端</td><td><code>bufferedAmount</code> 可能持续增长。</td><td>设置队列上限、发送超时和降级策略。</td></tr>
+        </tbody>
+    </table>
+
+    <h2>8. 排查断线的顺序</h2>
+    <ol>
+        <li>确认是否曾经收到过 101；如果没有，回到 §3-§4 的握手排查。</li>
+        <li>查看 close code、close reason，以及是客户端、服务端还是代理先关闭。</li>
+        <li>如果是 1006 或没有 Close，检查网络、TLS、代理 idle timeout、进程崩溃和心跳。</li>
+        <li>如果是 1002，检查帧头、掩码、opcode、RSV、长度和分片状态。</li>
+        <li>如果是 1007/1009/1008，检查编码、消息大小、授权和业务策略。</li>
+        <li>最后检查重连是否有退避、抖动、上限，以及连接清理是否幂等。</li>
+    </ol>
+
+    <div class="exercise">
+        <strong>自测：</strong>客户端收到 1006 后应该把 1006 发送给服务端吗？为什么？如果所有客户端同时收到代理超时并立即重连，系统可能出现什么问题？
+    </div>
+
+    <h2>官方依据</h2>
+    <ul>
+        <li><a href="https://www.rfc-editor.org/rfc/rfc6455#section-6.1">RFC 6455 §6.1：Sending Data</a></li>
+        <li><a href="https://www.rfc-editor.org/rfc/rfc6455#section-6.2">RFC 6455 §6.2：Receiving Data</a></li>
+        <li><a href="https://www.rfc-editor.org/rfc/rfc6455#section-7.1">RFC 6455 §7.1：Definitions</a></li>
+        <li><a href="https://www.rfc-editor.org/rfc/rfc6455#section-7.2">RFC 6455 §7.2：Abnormal Closures</a></li>
+        <li><a href="https://www.rfc-editor.org/rfc/rfc6455#section-7.3">RFC 6455 §7.3：Normal Closure</a></li>
+        <li><a href="https://www.rfc-editor.org/rfc/rfc6455#section-7.4">RFC 6455 §7.4：Status Codes</a></li>
+        <li><a href="https://www.rfc-editor.org/rfc/rfc6455#section-8.1">RFC 6455 §8.1：UTF-8 Errors</a></li>
+        <li><a href="rfc6455-03-data-framing.html">上一部分：§5 数据帧与控制帧</a></li>
+        <li><a href="rfc6455-05-extensions-and-security.html">下一部分：§9-§10 扩展与安全</a></li>
+        <li><a href="rfc6455-guide.html">返回 RFC 6455 总导读</a></li>
+    </ul>
+</main>
+</body>
+</html>

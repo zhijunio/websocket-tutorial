@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>RFC 6455 §9-§10 导读：扩展与安全</title>
+    <link rel="stylesheet" href="../assets/styles.css">
+</head>
+<body>
+<main class="page">
+    <p class="kicker">Reference · RFC 6455 §9-§10</p>
+    <h1>RFC 6455 §9-§10：扩展与安全</h1>
+    <p class="lead">本篇解析 WebSocket 如何协商协议扩展，以及 RFC 6455 对 Origin、非浏览器客户端、掩码、资源限制、认证、TLS 和非法数据的安全要求。</p>
+
+    <div class="note">
+        <strong>边界：</strong>扩展和安全能力必须显式协商或由应用实现。WebSocket 握手成功不等于用户已认证，掩码也不等于加密；真正的传输机密性和完整性来自 TLS，即 <code>wss://</code>。
+    </div>
+
+    <h2>1. §9 扩展是什么</h2>
+    <p>WebSocket 基础帧格式预留了 RSV 位、扩展数据区域和部分 opcode，允许未来协议扩展增加能力。客户端可以请求扩展，服务端可以接受其中一个或多个；RFC 6455 本身没有定义具体扩展，具体扩展需要由其他规范单独定义。</p>
+    <p>常见例子是 <code>permessage-deflate</code>，它不是 RFC 6455 §9 直接定义的内容，而是通过握手中的 <code>Sec-WebSocket-Extensions</code> 协商压缩能力。扩展可能改变 Payload 的解释、帧处理顺序或消息边界，因此中间件不能在不了解扩展语义时随意合并或拆分帧。</p>
+
+    <h2>2. §9.1 扩展协商</h2>
+    <h3>2.1 握手中的表达方式</h3>
+    <pre>客户端：
+Sec-WebSocket-Extensions: permessage-deflate; client_max_window_bits
+
+服务端：
+Sec-WebSocket-Extensions: permessage-deflate</pre>
+    <table>
+        <thead><tr><th>规则</th><th>含义</th></tr></thead>
+        <tbody>
+        <tr><td>客户端可以请求</td><td>请求表示“我愿意使用”，不表示扩展已经生效。</td></tr>
+        <tr><td>服务端只能选择已请求扩展</td><td>服务端不能凭空返回客户端没有请求的扩展。</td></tr>
+        <tr><td>客户端收到未请求扩展必须失败</td><td>避免双方对帧语义产生分歧。</td></tr>
+        <tr><td>参数必须由扩展规范定义</td><td>不能任意解释或接受未知参数。</td></tr>
+        <tr><td>格式错误必须立即失败</td><td>不符合 ABNF 的协商数据不能继续使用。</td></tr>
+        </tbody>
+    </table>
+
+    <h3>2.2 扩展顺序是有意义的</h3>
+    <p>客户端请求列表通常表达偏好顺序；服务端响应列表表达实际启用的扩展顺序。若多个扩展都会修改数据或帧，处理顺序按服务端响应顺序解释。</p>
+    <pre>服务端响应：foo, bar
+
+处理结果：bar(foo(data))</pre>
+    <p>因此，扩展顺序不是装饰性文本。压缩、加密包装、复用或其他帧变换叠加时，客户端和服务端必须遵循对应扩展的定义，否则会出现“握手成功但消息无法解析”的故障。</p>
+
+    <h2>3. 扩展与 Spring/Tomcat 的边界</h2>
+    <table>
+        <thead><tr><th>层次</th><th>负责什么</th><th>排错问题</th></tr></thead>
+        <tbody>
+        <tr><td>客户端握手</td><td>通过 Header 请求扩展。</td><td>浏览器是否发送了 <code>Sec-WebSocket-Extensions</code>？</td></tr>
+        <tr><td>服务端握手</td><td>选择并返回实际启用的扩展。</td><td>响应是否返回了未请求的扩展？</td></tr>
+        <tr><td>容器/框架</td><td>根据协商结果编码和解码帧。</td><td>框架配置是否和抓包中的协商结果一致？</td></tr>
+        <tr><td>业务层</td><td>处理解压后的文本或二进制消息。</td><td>不要把压缩 Payload 当作普通 JSON。</td></tr>
+        </tbody>
+    </table>
+
+    <h2>4. §10.1 非浏览器客户端</h2>
+    <p>RFC 的 Origin 安全模型主要针对“恶意 JavaScript 在可信浏览器中运行”的场景。非浏览器客户端可以伪造 <code>Origin</code>，因此服务端不能仅凭 Origin Header 断言请求一定来自浏览器页面。</p>
+    <p>无论客户端类型如何，服务端都必须把输入视为不可信：</p>
+    <ul>
+        <li>校验 JSON、命令、房间名、用户标识和消息大小。</li>
+        <li>不要把消息直接拼进 SQL、Shell、日志或 HTML。</li>
+        <li>使用参数化查询、输出编码和明确的授权检查。</li>
+        <li>不要把“握手来自允许 Origin”当成业务授权结论。</li>
+    </ul>
+
+    <h2>5. §10.2 Origin 校验</h2>
+    <p>如果服务端只希望接受特定网站的浏览器脚本连接，应校验 <code>Origin</code>。不接受时，RFC 建议在握手阶段返回 <code>403 Forbidden</code>。</p>
+    <pre>浏览器请求：
+Origin: https://app.example.com
+
+服务端策略：
+https://app.example.com   允许
+https://admin.example.com 允许
+https://evil.example       拒绝 403</pre>
+    <table>
+        <thead><tr><th>Origin 校验能解决什么</th><th>Origin 校验不能解决什么</th></tr></thead>
+        <tbody>
+        <tr><td>限制可信浏览器中的恶意脚本滥用连接权限。</td><td>不能证明用户身份。</td></tr>
+        <tr><td>作为浏览器来源策略的一部分。</td><td>不能替代 Cookie/Token 认证。</td></tr>
+        <tr><td>在握手前拒绝不允许来源。</td><td>不能替代每个业务操作的授权。</td></tr>
+        </tbody>
+    </table>
+    <p>生产实现还要考虑反向代理是否正确转发 Origin、允许列表是否按环境配置，以及日志中是否记录了拒绝原因但没有泄露凭证。</p>
+
+    <h2>6. §10.3 掩码防护的真实目的</h2>
+    <p>RFC 设计客户端掩码，主要是防止攻击者控制的浏览器脚本把客户端发出的字节伪装成某些 HTTP 请求，从而诱导错误实现的代理缓存或处理这些数据，造成基础设施污染。</p>
+    <p>客户端必须为每个帧选择新的、不可预测的掩码 key。一个 key 不能被应用预测，下一个 key 也不能由前一个 key 推导；帧开始发送后，正在发送的 Payload 也不能被应用动态改写。</p>
+    <table>
+        <thead><tr><th>机制</th><th>主要目的</th><th>不是它的目的</th></tr></thead>
+        <tbody>
+        <tr><td>Client-to-server masking</td><td>降低恶意脚本控制线上字节形态、攻击中间基础设施的能力。</td><td>不是加密、不是完整性校验、不是身份认证。</td></tr>
+        <tr><td>TLS / <code>wss://</code></td><td>提供传输机密性和完整性。</td><td>不自动完成用户授权和业务鉴权。</td></tr>
+        </tbody>
+    </table>
+
+    <h2>7. §10.4 实现限制与拒绝服务</h2>
+    <p>攻击者可以发送一个极大的帧，也可以发送大量小帧组成一个很长的分片消息，试图耗尽接收端内存。RFC 要求实现保护自己，并建议同时限制：</p>
+    <ul>
+        <li>单帧 Payload 大小。</li>
+        <li>重组后的完整消息大小。</li>
+        <li>单连接发送队列和接收队列。</li>
+        <li>连接总数、订阅数量和房间成员数量。</li>
+        <li>消息处理时间、心跳超时和慢客户端积压。</li>
+    </ul>
+    <p>限制触发时可以根据上下文使用 <code>1009</code>（消息过大）、<code>1008</code>（策略拒绝）或直接关闭。具体阈值属于部署和业务设计，应通过指标和负载实验验证。</p>
+
+    <h2>8. §10.5 客户端认证</h2>
+    <p>RFC 6455 不规定唯一的认证方式。服务端可以使用普通 HTTP 服务已经支持的机制，例如：</p>
+    <table>
+        <thead><tr><th>机制</th><th>实现关注点</th></tr></thead>
+        <tbody>
+        <tr><td>Cookie</td><td>会话有效期、CSRF/Origin、跨域策略和代理转发。</td></tr>
+        <tr><td>Authorization</td><td>握手前验证、Token 过期、日志脱敏和权限映射。</td></tr>
+        <tr><td>短期查询参数票据</td><td>短时有效、一次性使用、避免出现在访问日志和 Referer。</td></tr>
+        <tr><td>TLS 客户端认证</td><td>证书生命周期、终止位置和用户身份映射。</td></tr>
+        </tbody>
+    </table>
+    <p><code>Sec-WebSocket-Key</code>、<code>Sec-WebSocket-Accept</code> 和 <code>Origin</code> 都不能单独承担用户身份认证与授权。</p>
+
+    <h2>9. §10.6 机密性与完整性</h2>
+    <p>RFC 要求 WebSocket 实现支持 TLS，并建议通信时使用 TLS。使用 <code>wss://</code> 时，TLS 握手保护后续 WebSocket 握手和帧；但 TLS 的安全收益仍取决于密码套件、证书校验、终止位置和内部链路配置。</p>
+    <pre>浏览器 ── TLS + WebSocket ──→ 入口代理 ──?──→ 应用
+
+需要明确：
+- TLS 在哪里终止？
+- 代理到应用的链路是否仍需加密？
+- Origin、认证和授权在哪一层执行？
+- 日志和指标是否记录了 Token 或消息正文？</pre>
+
+    <h2>10. §10.7 非法数据</h2>
+    <p>客户端和服务端都必须验证输入。无法理解或不符合安全标准的数据可以直接丢弃 TCP；如果非法数据发生在握手完成后，通常应先发送合适的 Close code，再关闭连接。握手阶段则应返回合适的 HTTP 状态码。</p>
+    <table>
+        <thead><tr><th>输入问题</th><th>推荐处理</th></tr></thead>
+        <tbody>
+        <tr><td>错误的 path 或 Origin</td><td>握手阶段返回 HTTP 错误，例如 403 或 404。</td></tr>
+        <tr><td>非法 opcode、RSV 或掩码</td><td>协议错误，使用 1002 或直接失败连接。</td></tr>
+        <tr><td>无效文本编码</td><td>使用 1007，不能把无效文本交给业务层。</td></tr>
+        <tr><td>消息超出限制</td><td>使用 1009 或策略拒绝，并释放已有缓冲。</td></tr>
+        <tr><td>业务字段不合法</td><td>验证、授权、限流；必要时使用 1008。</td></tr>
+        </tbody>
+    </table>
+
+    <h2>11. §10.8 握手中的 SHA-1</h2>
+    <p>RFC 明确说明，WebSocket 握手使用 SHA-1 不依赖 SHA-1 的碰撞抗性或第二原像抗性。它用于根据客户端 Key 生成握手确认值，不是密码哈希、数字签名或数据完整性保护。</p>
+    <p>因此，不能因为握手使用 SHA-1 就把它等同于“WebSocket 使用了不安全的密码算法”；也不能因此把握手 Accept 当成认证凭证。连接保密性和完整性仍由 TLS 负责。</p>
+
+    <h2>12. 一张安全检查表</h2>
+    <ol>
+        <li>是否只允许明确的 Origin，且非浏览器客户端不能靠伪造 Origin 获得额外信任？</li>
+        <li>是否在握手或连接建立后完成身份认证，并在每个业务动作上做授权？</li>
+        <li>是否使用 <code>wss://</code>，并检查证书、TLS 终止和内部链路？</li>
+        <li>是否限制单帧、完整消息、连接数、队列和订阅数量？</li>
+        <li>是否校验 JSON、文本编码、命令、房间、用户 ID 和消息大小？</li>
+        <li>是否对协议错误、策略拒绝、慢客户端和异常重连建立指标与日志？</li>
+        <li>日志中是否不会出现 Cookie、Authorization、Token 或敏感消息正文？</li>
+    </ol>
+
+    <div class="exercise">
+        <strong>自测：</strong>为什么 Origin 校验不能替代 Token 鉴权？为什么掩码不能替代 TLS？请分别从“保护对象”和“攻击模型”回答。
+    </div>
+
+    <h2>官方依据</h2>
+    <ul>
+        <li><a href="https://www.rfc-editor.org/rfc/rfc6455#section-9">RFC 6455 §9：Extensions</a></li>
+        <li><a href="https://www.rfc-editor.org/rfc/rfc6455#section-9.1">RFC 6455 §9.1：Negotiating Extensions</a></li>
+        <li><a href="https://www.rfc-editor.org/rfc/rfc6455#section-10">RFC 6455 §10：Security Considerations</a></li>
+        <li><a href="https://www.rfc-editor.org/rfc/rfc6455#section-10.2">RFC 6455 §10.2：Origin Considerations</a></li>
+        <li><a href="https://www.rfc-editor.org/rfc/rfc6455#section-10.3">RFC 6455 §10.3：Attacks On Infrastructure</a></li>
+        <li><a href="https://www.rfc-editor.org/rfc/rfc6455#section-10.4">RFC 6455 §10.4：Implementation-Specific Limits</a></li>
+        <li><a href="https://www.rfc-editor.org/rfc/rfc6455#section-10.5">RFC 6455 §10.5：WebSocket Client Authentication</a></li>
+        <li><a href="https://www.rfc-editor.org/rfc/rfc6455#section-10.6">RFC 6455 §10.6：Connection Confidentiality and Integrity</a></li>
+        <li><a href="https://www.rfc-editor.org/rfc/rfc6455#section-10.7">RFC 6455 §10.7：Handling of Invalid Data</a></li>
+        <li><a href="https://www.rfc-editor.org/rfc/rfc6455#section-10.8">RFC 6455 §10.8：Use of SHA-1</a></li>
+        <li><a href="rfc6455-04-data-lifecycle-and-errors.html">上一部分：§6-§8 收发、关闭与错误</a></li>
+        <li><a href="rfc6455-06-iana-and-usage.html">下一部分：§11-§14 注册表、复用与参考文献</a></li>
+        <li><a href="rfc6455-guide.html">返回 RFC 6455 总导读</a></li>
+    </ul>
+</main>
+</body>
+</html>

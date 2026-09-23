@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 360" role="img" aria-labelledby="title desc">
+  <title id="title">WebSocket Opening Handshake 时序图</title>
+  <desc id="desc">浏览器先发送带 Upgrade 字段的 HTTP 请求，服务端用 101 Switching Protocols 响应，之后双方在同一连接上双向发送消息。</desc>
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L0,6 L9,3 z" fill="#165d63"/></marker>
+    <style>
+      .label { font: 600 18px system-ui, sans-serif; fill: #17202a; }
+      .small { font: 16px ui-monospace, monospace; fill: #17202a; }
+      .muted { font: 15px system-ui, sans-serif; fill: #5e6b78; }
+      .line { stroke: #b4c6c3; stroke-width: 2; stroke-dasharray: 7 7; }
+      .arrow { stroke: #165d63; stroke-width: 3; marker-end: url(#arrow); }
+    </style>
+  </defs>
+  <rect width="900" height="360" fill="#fbfaf7"/>
+  <text x="170" y="38" text-anchor="middle" class="label">浏览器</text>
+  <text x="730" y="38" text-anchor="middle" class="label">WebSocket 服务端</text>
+  <line x1="170" y1="58" x2="170" y2="315" class="line"/><line x1="730" y1="58" x2="730" y2="315" class="line"/>
+  <line x1="190" y1="110" x2="710" y2="110" class="arrow"/>
+  <text x="450" y="88" text-anchor="middle" class="small">GET /chat · Upgrade: websocket</text>
+  <text x="450" y="103" text-anchor="middle" class="muted">HTTP 握手请求</text>
+  <line x1="710" y1="190" x2="190" y2="190" class="arrow"/>
+  <text x="450" y="168" text-anchor="middle" class="small">101 Switching Protocols</text>
+  <text x="450" y="183" text-anchor="middle" class="muted">协议切换成功</text>
+  <line x1="190" y1="270" x2="710" y2="270" class="arrow"/>
+  <text x="450" y="248" text-anchor="middle" class="small">WebSocket message</text>
+  <text x="450" y="263" text-anchor="middle" class="muted">握手后：双向消息阶段</text>
+  <text x="450" y="330" text-anchor="middle" class="muted">同一条 TCP 连接继续存在</text>
+</svg>

@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>第 4 课：Jakarta @ServerEndpoint 对照</title>
+    <link rel="stylesheet" href="../assets/styles.css">
+</head>
+<body>
+<main class="page">
+    <p class="kicker">Lesson 0004 · Jakarta WebSocket</p>
+    <h1>用 Jakarta 实现同一个回显端点</h1>
+    <p class="lead">本课的唯一目标：用 Jakarta <code>@ServerEndpoint</code> 实现第二个回显端点，并能解释它与 Spring <code>TextWebSocketHandler</code> 的边界。</p>
+
+    <div class="note">
+        <strong>前置条件：</strong>使用本课独立示例项目中的 Java 25 + Spring Boot 4.1.1 和 POM。Spring Boot 4.1.1 管理 Jakarta WebSocket API 2.2.0；本课项目只包含 Jakarta endpoint 和 exporter 配置。
+    </div>
+    <p>本课的独立示例位于 <a href="../examples/index.html#example-0004"><code>examples/0004-jakarta-server-endpoint</code></a>。它不依赖第三课的源码或构建目录。</p>
+
+    <h2>1. Endpoint：用注解声明生命周期回调</h2>
+    <p>新建一个 endpoint，路径不要和第三课的 <code>/ws/echo</code> 冲突：</p>
+    <pre>package com.example.websocket;
+
+import jakarta.websocket.OnClose;
+import jakarta.websocket.OnMessage;
+import jakarta.websocket.OnOpen;
+import jakarta.websocket.Session;
+import jakarta.websocket.server.ServerEndpoint;
+
+@ServerEndpoint("/ws/jakarta-echo")
+public class JakartaEchoEndpoint {
+
+    @OnOpen
+    public void onOpen(Session session) {
+        System.out.println("Jakarta WebSocket opened: " + session.getId());
+    }
+
+    @OnMessage
+    public String onMessage(String message) {
+        return "echo: " + message;
+    }
+
+    @OnClose
+    public void onClose(Session session) {
+        System.out.println("Jakarta WebSocket closed: " + session.getId());
+    }
+}</pre>
+    <p><code>@OnMessage</code> 返回的字符串会作为文本消息发送回客户端。这个 endpoint 没有使用 Spring <code>@Component</code>；它的生命周期由 Jakarta WebSocket 容器管理。</p>
+
+    <h2>2. 在嵌入式容器中注册 endpoint</h2>
+    <p>Spring Boot 运行在嵌入式 Tomcat 中时，添加一个 <code>ServerEndpointExporter</code> Bean，让 Spring 发现并注册带有 <code>@ServerEndpoint</code> 的类：</p>
+    <pre>package com.example.websocket;
+
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.web.socket.server.standard.ServerEndpointExporter;
+
+@Configuration
+public class JakartaWebSocketConfig {
+
+    @Bean
+    public ServerEndpointExporter serverEndpointExporter() {
+        return new ServerEndpointExporter();
+    }
+}</pre>
+    <div class="note">
+        <strong>部署边界：</strong><code>ServerEndpointExporter</code> 适用于 Spring Boot 的嵌入式容器。若部署到已经负责扫描和注册 endpoint 的 Jakarta WebSocket 容器，通常不应重复配置它；以实际容器部署方式为准。
+    </div>
+
+    <h2>3. 验证两个端点</h2>
+    <p>在本课独立项目中运行下面的客户端代码；如需和 Spring Handler 对比，再单独启动第三课的示例项目：</p>
+    <pre>const springSocket = new WebSocket("ws://localhost:8080/ws/echo");
+springSocket.onopen = () =&gt; springSocket.send("from spring");
+springSocket.onmessage = event =&gt; console.log(event.data);</pre>
+    <pre>const jakartaSocket = new WebSocket("ws://localhost:8080/ws/jakarta-echo");
+jakartaSocket.onopen = () =&gt; jakartaSocket.send("from jakarta");
+jakartaSocket.onmessage = event =&gt; console.log(event.data);</pre>
+    <p>两个 Network WS 请求都应返回 <code>101</code>，并分别收到 <code>echo: from spring</code> 与 <code>echo: from jakarta</code>。</p>
+
+    <h2>4. 源码导读：谁管理 endpoint</h2>
+    <p><a href="../examples/0004-jakarta-server-endpoint/src/main/java/com/example/websocket/JakartaWebSocketConfig.java">配置类</a>中的 <code>ServerEndpointExporter</code> 是注册桥梁：它把带有 <code>@ServerEndpoint</code> 的<a href="../examples/0004-jakarta-server-endpoint/src/main/java/com/example/websocket/JakartaEchoEndpoint.java">endpoint</a>交给嵌入式 WebSocket 容器。</p>
+    <pre>Spring Boot 启动
+        ↓
+JakartaWebSocketConfig.ServerEndpointExporter
+        ↓
+@ServerEndpoint("/ws/jakarta-echo")
+        ↓
+@OnOpen / @OnMessage / @OnClose</pre>
+    <img src="../assets/jakarta-endpoint-flow.svg" alt="Jakarta ServerEndpoint 注册与生命周期调用链" style="width:100%;height:auto">
+    <p>这里没有 Spring Handler 的 <code>registerWebSocketHandlers</code> 调用。路径来自注解，消息回调来自 Jakarta 注解，endpoint 生命周期由容器管理。这个差异正是本课要掌握的源码边界。</p>
+    <p><a href="../examples/0004-jakarta-server-endpoint/src/test/java/com/example/websocket/WebSocketApplicationTests.java">测试</a>使用随机端口的真实 Web 环境，因为 <code>ServerEndpointExporter</code> 需要容器提供 <code>ServerContainer</code>；默认 Mock Web 环境无法证明 endpoint 注册成功。</p>
+
+    <h2>5. 两种模型的取舍</h2>
+    <table>
+        <thead><tr><th>维度</th><th>Spring WebSocket Handler</th><th>Jakarta @ServerEndpoint</th></tr></thead>
+        <tbody>
+        <tr><td>入口</td><td><code>WebSocketConfigurer</code> 显式注册路径。</td><td><code>@ServerEndpoint</code> 声明路径。</td></tr>
+        <tr><td>回调</td><td>继承 <code>TextWebSocketHandler</code> 等 Handler。</td><td>使用 <code>@OnOpen</code>、<code>@OnMessage</code>、<code>@OnClose</code> 等注解。</td></tr>
+        <tr><td>容器整合</td><td>直接进入 Spring 的 WebSocket 抽象和 Bean 管理。</td><td>遵循 Jakarta WebSocket 标准，由 WebSocket 容器管理 endpoint 生命周期。</td></tr>
+        <tr><td>依赖注入</td><td>Handler 可以直接使用构造器注入。</td><td>需要额外的 Spring/Jakarta 集成方式，不能默认假设 endpoint 可直接按普通 Spring Bean 注入。</td></tr>
+        <tr><td>适合场景</td><td>Spring 应用内需要拦截器、统一配置和 Spring 组件协作。</td><td>希望依赖标准 API，或需要与 Jakarta WebSocket 容器模型保持一致。</td></tr>
+        </tbody>
+    </table>
+    <p>两种实现都建立在同一个 WebSocket 协议之上：浏览器看到的仍然是 HTTP Upgrade、101、帧和 Close。变化的是服务端编程模型，不是线上的协议。</p>
+
+    <h2>6. 练习：先回忆，再验证</h2>
+    <div class="exercise">
+        <p>完成两个端点的验证后，回答下面 4 个问题：</p>
+        <ol>
+            <li>
+                为什么 Jakarta endpoint 需要 <code>ServerEndpointExporter</code>？
+                <details class="answer">
+                    <summary>查看答案</summary>
+                    <p>在 Spring Boot 嵌入式容器中，它负责发现带有 <code>@ServerEndpoint</code> 的类并向底层 WebSocket 容器注册。没有它时，endpoint 可能不会被映射到请求路径。</p>
+                </details>
+            </li>
+            <li>
+                两个端点使用不同的 Java API，为什么浏览器看到的握手仍然相同？
+                <details class="answer">
+                    <summary>查看答案</summary>
+                    <p>Spring Handler 和 Jakarta endpoint 都实现同一个 WebSocket 协议。它们只改变服务端的编程模型，线上仍然使用 HTTP Upgrade、101 和 WebSocket 帧。</p>
+                </details>
+            </li>
+            <li>
+                为什么不能默认把 Jakarta endpoint 当成普通 Spring singleton 使用？
+                <details class="answer">
+                    <summary>查看答案</summary>
+                    <p>endpoint 的实例和生命周期由 Jakarta WebSocket 容器管理，不等同于普通 Spring Bean。需要共享状态或依赖注入时，应显式设计集成方式，并保证并发安全。</p>
+                </details>
+            </li>
+            <li>
+                如果 Spring 端点返回 101，而 Jakarta 端点返回 404，你会优先检查什么？
+                <details class="answer">
+                    <summary>查看答案</summary>
+                    <p>先检查 <code>@ServerEndpoint</code> 的路径、类是否被 exporter 发现、<code>ServerEndpointExporter</code> Bean 是否生效，以及请求路径是否准确写成 <code>/ws/jakarta-echo</code>。</p>
+                </details>
+            </li>
+        </ol>
+    </div>
+
+    <div class="quiz" data-quiz>
+        <p><strong>快速检查：</strong>Spring Handler 和 Jakarta endpoint 的主要差异是什么？</p>
+        <button data-correct="false">客户端使用了不同协议</button>
+        <button data-correct="true">服务端编程模型不同</button>
+        <button data-correct="false">WebSocket 帧格式不同</button>
+        <p class="feedback" aria-live="polite"></p>
+    </div>
+
+    <nav class="lesson-nav" aria-label="课程导航">
+        <a href="0003-spring-boot-websocket-echo.html">← 上一课：Spring Boot 双向消息 Demo</a>
+        <a class="next" href="0005-multi-room-chat.html">下一课：多房间聊天与广播 →</a>
+    </nav>
+
+    <h2>本课参考</h2>
+    <ul>
+        <li><a href="https://docs.spring.io/spring-framework/reference/web/websocket/server.html">Spring Framework：WebSocket Server Configuration</a></li>
+        <li><a href="https://jakarta.ee/specifications/websocket/2.2/">Jakarta WebSocket 2.2 Specification</a></li>
+        <li><a href="https://docs.spring.io/spring-framework/docs/current/javadoc-api/org/springframework/web/socket/server/standard/ServerEndpointExporter.html">ServerEndpointExporter API</a></li>
+        <li><a href="0003-spring-boot-websocket-echo.html">上一课：Spring Boot 双向消息 Demo</a></li>
+        <li><a href="../reference/websocket-basics.html">WebSocket 基础速查</a></li>
+    </ul>
+
+    <p class="footer">完成两个端点的启动、抓包和对比后，把构建结果、两个 URL 的状态码和你的答案发给我。下一课将把单连接回显扩展为多房间广播。</p>
+</main>
+<script src="../assets/quiz.js" defer></script>
+</body>
+</html>

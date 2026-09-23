@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 420" role="img" aria-labelledby="title desc">
+  <title id="title">多房间聊天的双向成员索引</title>
+  <desc id="desc">左侧房间索引连接到右侧会话索引，两个索引共同支持广播和断开清理。</desc>
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+      <path d="M0,0 L0,6 L9,3 z" fill="#165d63"/>
+    </marker>
+    <style>
+      .title { font: 700 22px system-ui, sans-serif; fill: #17202a; }
+      .label { font: 600 17px system-ui, sans-serif; fill: #17202a; }
+      .small { font: 15px ui-monospace, monospace; fill: #17202a; }
+      .muted { font: 15px system-ui, sans-serif; fill: #5e6b78; }
+      .box { fill: #e4f0ee; stroke: #165d63; stroke-width: 2; }
+      .line { stroke: #165d63; stroke-width: 2.5; marker-end: url(#arrow); }
+    </style>
+  </defs>
+  <rect width="900" height="420" fill="#fbfaf7"/>
+  <text x="450" y="38" text-anchor="middle" class="title">同一份连接状态的两个查询方向</text>
+
+  <rect x="80" y="75" width="280" height="245" rx="6" class="box"/>
+  <text x="220" y="108" text-anchor="middle" class="label">rooms：用于广播</text>
+  <text x="110" y="155" class="small">red  -&gt; session-a, session-b</text>
+  <text x="110" y="195" class="small">blue -&gt; session-c</text>
+  <text x="220" y="275" text-anchor="middle" class="muted">按房间找到接收者</text>
+
+  <rect x="540" y="75" width="280" height="245" rx="6" class="box"/>
+  <text x="680" y="108" text-anchor="middle" class="label">sessionRooms：用于清理</text>
+  <text x="570" y="155" class="small">session-a -&gt; red</text>
+  <text x="570" y="195" class="small">session-b -&gt; red</text>
+  <text x="570" y="235" class="small">session-c -&gt; blue</text>
+  <text x="680" y="275" text-anchor="middle" class="muted">断开时找到所有房间</text>
+
+  <line x1="365" y1="150" x2="535" y2="150" class="line"/>
+  <line x1="535" y1="230" x2="365" y2="230" class="line"/>
+  <text x="450" y="135" text-anchor="middle" class="muted">加入 / 离开同步更新</text>
+  <text x="450" y="218" text-anchor="middle" class="muted">断开清理反向查找</text>
+
+  <text x="450" y="375" text-anchor="middle" class="muted">只维护一个方向，会让广播或断开清理变得昂贵且容易留下脏状态</text>
+</svg>

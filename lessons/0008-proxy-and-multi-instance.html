@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>第 8 课：代理、网关和多实例</title>
+    <link rel="stylesheet" href="../assets/styles.css">
+</head>
+<body>
+<main class="page">
+    <p class="kicker">Lesson 0008 · Scaling</p>
+    <h1>连接在哪个节点，消息到哪个节点</h1>
+    <p class="lead">本课的唯一目标：通过 Nginx 和两个 Spring Boot 实例复现 WebSocket Upgrade 转发，并解释多实例下本地连接表为什么不够。</p>
+
+    <div class="note"><strong>示例项目：</strong><a href="../examples/index.html#example-0008"><code>examples/0008-proxy-and-multi-instance</code></a>。它包含两个应用容器、Nginx、WebSocket endpoint、HTTP 发布接口和 Actuator 指标入口。</div>
+
+    <h2>1. 代理必须正确转发 Upgrade</h2>
+    <p>WebSocket 先是 HTTP Upgrade。代理若使用 HTTP/1.0、丢弃 Upgrade/Connection 头，或没有把路径转发到正确服务端，客户端就只能看到普通 HTTP 错误。</p>
+    <pre>location /ws/ {
+    proxy_pass http://websocket_nodes;
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "Upgrade";
+    proxy_read_timeout 60s;
+}</pre>
+    <p><code>proxy_read_timeout</code> 只决定代理多久没有读到上游数据后关闭连接，不是应用心跳。生产中应让心跳周期小于代理 idle timeout，并明确谁负责检测和关闭。</p>
+
+    <h2>2. 源码和部署路径导读</h2>
+    <pre>浏览器 ws://localhost:8080/ws/notifications?alice
+        ↓
+Nginx :8080
+        ├─ Upgrade + HTTP/1.1 + timeout
+        ↓
+app-a 或 app-b
+        ├─ WebSocketConfig → Handler
+        └─ ConnectionRegistry（只在本进程内存）
+
+POST /api/users/alice/notifications
+        ↓
+某一个实例的 NotificationController
+        ↓
+只查询该实例的 ConnectionRegistry</pre>
+    <p><a href="../examples/0008-proxy-and-multi-instance/src/main/java/com/example/websocket/ConnectionRegistry.java">ConnectionRegistry</a> 是本地连接目录，不是全局用户目录。<a href="../examples/0008-proxy-and-multi-instance/src/main/java/com/example/websocket/NotificationController.java">Controller</a> 返回 <code>deliveredLocally</code>，故意把跨实例投递失败暴露出来。</p>
+    <p><a href="../examples/0008-proxy-and-multi-instance/nginx.conf">Nginx 配置</a>只解决连接转发，不解决消息路由。<a href="../examples/0008-proxy-and-multi-instance/docker-compose.yml">Compose</a>只启动两个独立进程，不会自动共享 Java 堆内存。</p>
+
+    <h2>3. 多实例路由的选择</h2>
+    <table>
+        <thead><tr><th>方案</th><th>能解决什么</th><th>代价或限制</th></tr></thead>
+        <tbody>
+        <tr><td>Sticky Session</td><td>尽量让同一客户端回到同一节点。</td><td>发布请求仍可能到错误节点；节点故障会丢连接。</td></tr>
+        <tr><td>共享消息总线</td><td>任一节点发布，所有节点都能消费并投递本地连接。</td><td>需要处理重复、顺序、背压和故障。</td></tr>
+        <tr><td>连接目录 + 定向路由</td><td>知道用户连接在哪个节点，直接把消息路由过去。</td><td>需要处理注册过期、竞态和节点故障。</td></tr>
+        <tr><td>专用 WebSocket Gateway</td><td>集中持有连接，后端只发布业务事件。</td><td>网关成为关键基础设施，需要容量规划。</td></tr>
+        </tbody>
+    </table>
+
+    <h2>4. 运行和验证</h2>
+    <pre>cd examples/0008-proxy-and-multi-instance
+mvn test
+docker compose up --build</pre>
+    <ol>
+        <li>多次执行 <code>curl http://localhost:8080/api/instance</code>，观察请求可能由不同实例处理。</li>
+        <li>通过代理建立 <code>ws://localhost:8080/ws/notifications?alice</code>。</li>
+        <li>POST 通知，查看返回的 <code>instance</code> 和 <code>deliveredLocally</code>。</li>
+        <li>在 DevTools 中确认代理后的握手返回 <code>101</code>。</li>
+    </ol>
+
+    <h2>5. 失败案例</h2>
+    <table>
+        <thead><tr><th>现象</th><th>根因方向</th></tr></thead>
+        <tbody>
+        <tr><td>代理返回 400/404/200</td><td>检查 HTTP/1.1、Upgrade、Connection、Host、路径和 upstream。</td></tr>
+        <tr><td>连接空闲后消失</td><td>比较应用心跳周期和 Nginx/网关 idle timeout。</td></tr>
+        <tr><td>HTTP 发布成功但 WebSocket 没收到</td><td>发布请求到达了不持有该连接的实例。</td></tr>
+        <tr><td>节点重启后用户消失</td><td>连接是短暂状态，依赖客户端重连和服务端重新注册。</td></tr>
+        </tbody>
+    </table>
+
+    <h2>6. 练习：先回忆，再验证</h2>
+    <div class="exercise">
+        <p>运行 Compose 示例后回答下面 4 个问题：</p>
+        <ol>
+            <li>为什么 Nginx 正确转发 Upgrade 仍然不能解决多实例消息投递？<details class="answer"><summary>查看答案</summary><p>Upgrade 只负责建立连接并选择一个后端节点；session 仍在那个进程的内存里，另一个实例无法直接访问它。</p></details></li>
+            <li>Sticky Session 能否保证发布请求一定到达持有连接的节点？<details class="answer"><summary>查看答案</summary><p>不能。发布请求可能来自另一个客户端、任务或服务，仍可能到达不同节点。</p></details></li>
+            <li>为什么应用心跳周期要小于代理 idle timeout？<details class="answer"><summary>查看答案</summary><p>没有上游数据时代理可能先关闭连接；心跳让代理持续观察到流量，但仍需留出抖动和处理时间。</p></details></li>
+            <li>多实例消息总线至少要考虑哪些语义？<details class="answer"><summary>查看答案</summary><p>至少考虑重复、顺序、投递失败、节点离线、连接注册过期、背压和幂等。</p></details></li>
+        </ol>
+    </div>
+
+    <div class="quiz" data-quiz>
+        <p><strong>快速检查：</strong>Nginx 的 WebSocket Upgrade 配置主要解决什么？</p>
+        <button data-correct="true">把握手和长连接正确转发到后端</button>
+        <button data-correct="false">自动共享所有 Java 实例的内存</button>
+        <button data-correct="false">保证离线消息永久保存</button>
+        <p class="feedback" aria-live="polite"></p>
+    </div>
+
+    <nav class="lesson-nav" aria-label="课程导航">
+        <a href="0007-push-notifications-and-replay.html">← 上一课：推送通知与补拉</a>
+        <a class="next" href="0009-stomp-websocket.html">下一课：STOMP over WebSocket →</a>
+    </nav>
+
+    <h2>本课参考</h2>
+    <ul>
+        <li><a href="https://nginx.org/en/docs/http/websocket.html">Nginx WebSocket proxying</a></li>
+        <li><a href="https://docs.spring.io/spring-framework/reference/web/websocket/server.html">Spring WebSocket Server</a></li>
+        <li><a href="../examples/index.html#example-0008">本课独立示例</a></li>
+    </ul>
+
+    <p class="footer">完成代理后的 101 验证和多实例投递失败复现后，把返回的 instance/deliveredLocally 结果发给我。下一课进入 STOMP over WebSocket。</p>
+</main>
+<script src="../assets/quiz.js" defer></script>
+</body>
+</html>

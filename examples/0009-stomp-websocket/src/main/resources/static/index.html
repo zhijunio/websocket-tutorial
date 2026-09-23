@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>STOMP over WebSocket</title>
+</head>
+<body>
+<main>
+    <h1>STOMP over WebSocket</h1>
+    <button id="connect">Connect</button>
+    <button id="subscribe">Subscribe</button>
+    <button id="send">Send</button>
+    <pre id="log"></pre>
+</main>
+<script>
+    const log = value => document.querySelector("#log").textContent += `${value}\n`;
+    let socket;
+    let connected = false;
+    let subscriptionId = "sub-1";
+
+    function frame(command, headers = {}, body = "") {
+        const headerText = Object.entries(headers).map(([key, value]) => `${key}:${value}`).join("\n");
+        return `${command}\n${headerText}\n\n${body}\0`;
+    }
+
+    document.querySelector("#connect").onclick = () => {
+        socket = new WebSocket(`ws://${location.host}/ws-stomp`);
+        socket.onmessage = event => {
+            log(`RECV ${event.data}`);
+            if (event.data.startsWith("CONNECTED")) connected = true;
+        };
+        socket.onopen = () => socket.send(frame("CONNECT", {
+            "accept-version": "1.2",
+            "host": location.host,
+            "heart-beat": "10000,10000"
+        }));
+        socket.onclose = event => { connected = false; log(`CLOSE ${event.code}`); };
+    };
+
+    document.querySelector("#subscribe").onclick = () => {
+        if (!connected) return log("connect first");
+        socket.send(frame("SUBSCRIBE", {
+            id: subscriptionId,
+            destination: "/topic/room",
+            ack: "auto"
+        }));
+    };
+
+    document.querySelector("#send").onclick = () => {
+        if (!connected) return log("connect first");
+        socket.send(frame("SEND", {
+            destination: "/app/chat.send",
+            "content-type": "application/json"
+        }, JSON.stringify({sender: "browser", text: "hello STOMP"})));
+    };
+</script>
+</body>
+</html>

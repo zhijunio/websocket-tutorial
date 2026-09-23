@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>第 10 课：MQTT 桥接</title>
+    <link rel="stylesheet" href="../assets/styles.css">
+</head>
+<body>
+<main class="page">
+    <p class="kicker">Lesson 0010 · MQTT</p>
+    <h1>把 MQTT 设备事件送到 WebSocket</h1>
+    <p class="lead">本课的唯一目标：理解 MQTT Broker、Java 后端和浏览器 WebSocket 各自负责什么，并跑通双向桥接路径。</p>
+
+    <div class="note"><strong>示例项目：</strong><a href="../examples/index.html#example-0010"><code>examples/0010-mqtt-websocket-bridge</code></a>。项目使用 Mosquitto、Java 25、Spring Boot 4.1.1 和 Paho Java 客户端。</div>
+
+    <h2>1. 三个系统不是同一层</h2>
+    <img src="../assets/mqtt-websocket-bridge.svg" alt="MQTT Broker、Java 后端和 WebSocket 客户端桥接架构图" style="width:100%;height:auto">
+    <table>
+        <thead><tr><th>组件</th><th>擅长什么</th><th>本课职责</th></tr></thead>
+        <tbody>
+        <tr><td>MQTT Broker</td><td>设备连接、topic、QoS、retain 和会话语义。</td><td>接收 <code>devices/+/events</code>，转发设备事件。</td></tr>
+        <tr><td>Java 后端</td><td>业务鉴权、协议转换、用户/设备关系和服务治理。</td><td>订阅 MQTT，解析 topic，找到 WebSocket session。</td></tr>
+        <tr><td>WebSocket</td><td>浏览器与后端之间的双向实时连接。</td><td>向已连接的设备页面推送事件。</td></tr>
+        </tbody>
+    </table>
+
+    <h2>2. Topic 映射是桥接的核心契约</h2>
+    <pre>MQTT event:   devices/device-1/events
+MQTT command: devices/device-1/commands
+WebSocket:    /ws/devices?device-1</pre>
+    <p><a href="../examples/0010-mqtt-websocket-bridge/src/main/java/com/example/websocket/TopicMapper.java">TopicMapper</a> 将设备 ID 映射为固定 topic 结构。它拒绝空白和非法设备 ID，避免把未校验的输入直接拼进 MQTT topic。</p>
+    <p>设备上报事件的路径是 MQTT → Java → WebSocket；业务下发命令的路径是 HTTP → Java → MQTT。两条路径的可靠性、权限和失败处理不能混为一谈。</p>
+
+    <h2>3. 源码导读：Paho 回调如何到达浏览器</h2>
+    <pre>MqttBridgeService.start
+    ├─ MqttClient.connect
+    └─ subscribe("devices/+/events")
+             ↓ MQTT callback
+TopicMapper.deviceIdFromEventTopic
+             ↓
+DeviceConnectionRegistry.sendToDevice
+             ↓
+WebSocketSession.sendMessage
+
+MqttCommandController.publish
+    └─ MqttBridgeService.publishCommand
+        └─ devices/{deviceId}/commands</pre>
+    <p><a href="../examples/0010-mqtt-websocket-bridge/src/main/java/com/example/websocket/MqttBridgeService.java">MqttBridgeService</a>负责 MQTT 连接、订阅和发布；<a href="../examples/0010-mqtt-websocket-bridge/src/main/java/com/example/websocket/DeviceConnectionRegistry.java">DeviceConnectionRegistry</a>只负责本 JVM 内的 WebSocket 连接目录；两者之间通过 topic 中的 device ID 对接。</p>
+    <p>本示例直接使用 Paho，让连接和回调清楚可见。Spring Integration MQTT 可以把同一边界封装成 inbound/outbound adapter 和 Spring MessageChannel，但不会替你决定 topic、QoS、重试、授权或背压。</p>
+
+    <h2>4. MQTT 语义不能被 WebSocket 自动继承</h2>
+    <ul>
+        <li>MQTT QoS 1 可能重复投递；WebSocket 客户端需要唯一 ID 和幂等处理。</li>
+        <li>MQTT retain 是 Broker 的保留消息语义，不等于 WebSocket 离线消息。</li>
+        <li>MQTT 会话、订阅和 WebSocket session 是两套生命周期。</li>
+        <li>一个慢 WebSocket 客户端不能无限阻塞 MQTT 回调线程，需要队列、超时和丢弃策略。</li>
+    </ul>
+
+    <h2>5. 运行和验证</h2>
+    <pre>cd examples/0010-mqtt-websocket-bridge
+mvn test
+docker compose up --build</pre>
+    <ol>
+        <li>浏览器连接 <code>ws://localhost:8080/ws/devices?device-1</code>。</li>
+        <li>向 Mosquitto 发布 <code>devices/device-1/events</code>。</li>
+        <li>确认浏览器收到 MQTT Payload。</li>
+        <li>调用 HTTP 命令接口，确认返回的 topic 是 <code>devices/device-1/commands</code>。</li>
+        <li>查看 app 和 mqtt 容器日志，区分连接失败、订阅失败和 WebSocket 路由失败。</li>
+    </ol>
+
+    <h2>6. 失败案例</h2>
+    <table>
+        <thead><tr><th>现象</th><th>根因方向</th></tr></thead>
+        <tbody>
+        <tr><td>MQTT 有消息但浏览器无消息</td><td>检查 topic 结构、device ID、WebSocket 连接目录和发送异常。</td></tr>
+        <tr><td>应用启动时连接 Broker 失败</td><td>检查 Broker 地址、Compose 服务名、端口和启动顺序；生产要有重连和就绪策略。</td></tr>
+        <tr><td>同一事件浏览器收到两次</td><td>检查 MQTT QoS、重连重订阅和 WebSocket 客户端幂等。</td></tr>
+        <tr><td>某个浏览器拖慢所有设备事件</td><td>检查 MQTT 回调线程是否同步写 WebSocket，增加隔离队列和慢客户端策略。</td></tr>
+        </tbody>
+    </table>
+
+    <h2>7. 练习：先回忆，再验证</h2>
+    <div class="exercise">
+        <p>运行示例后回答下面 4 个问题：</p>
+        <ol>
+            <li>为什么 MQTT Broker 不能直接替代浏览器 WebSocket？<details class="answer"><summary>查看答案</summary><p>浏览器业务通常需要 HTTP/WebSocket 鉴权、用户会话和前端友好的连接模型；MQTT Broker 面向 topic 和设备消息，不负责你的用户业务授权和页面连接管理。</p></details></li>
+            <li>为什么桥接代码必须校验 topic 和 device ID？<details class="answer"><summary>查看答案</summary><p>topic 是路由契约，未经校验的输入可能把事件路由到错误设备或形成非法订阅/发布路径；校验还限制了资源和权限边界。</p></details></li>
+            <li>QoS 1 为什么要求 WebSocket 侧考虑幂等？<details class="answer"><summary>查看答案</summary><p>QoS 1 目标是至少一次投递，重试可能产生重复消息。桥接和客户端需要事件 ID、序列号或去重策略。</p></details></li>
+            <li>为什么不能在 MQTT 回调线程里无限等待慢 WebSocket？<details class="answer"><summary>查看答案</summary><p>回调线程被阻塞会拖慢其他 MQTT 消息，最终扩大延迟和堆积。应使用有界队列、超时、隔离执行器和明确的丢弃/降级策略。</p></details></li>
+        </ol>
+    </div>
+
+    <div class="quiz" data-quiz>
+        <p><strong>快速检查：</strong>本桥接中 MQTT topic 的主要作用是什么？</p>
+        <button data-correct="false">替代 TLS 加密</button>
+        <button data-correct="true">表达设备事件和命令的路由契约</button>
+        <button data-correct="false">保证浏览器消息一定只到达一次</button>
+        <p class="feedback" aria-live="polite"></p>
+    </div>
+
+    <nav class="lesson-nav" aria-label="课程导航">
+        <a href="0009-stomp-websocket.html">← 上一课：STOMP over WebSocket</a>
+        <a class="next" href="0011-high-frequency-benchmark.html">下一课：高频小消息基准 →</a>
+    </nav>
+
+    <h2>本课参考</h2>
+    <ul>
+        <li><a href="https://mqtt.org/mqtt-specification/">MQTT Specification</a></li>
+        <li><a href="https://github.com/eclipse-paho/paho.mqtt.java">Eclipse Paho MQTT Java</a></li>
+        <li><a href="https://docs.spring.io/spring-integration/reference/mqtt.html">Spring Integration MQTT</a></li>
+        <li><a href="../examples/index.html#example-0010">本课独立示例</a></li>
+    </ul>
+
+    <p class="footer">完成 MQTT 发布、浏览器接收和 HTTP 命令验证后，把 topic、日志和测试结果发给我。下一课进入 G3 高频小消息性能基准。</p>
+</main>
+<script src="../assets/quiz.js" defer></script>
+</body>
+</html>

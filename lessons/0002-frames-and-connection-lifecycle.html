@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>第 2 课：WebSocket 帧与连接生命周期</title>
+    <link rel="stylesheet" href="../assets/styles.css">
+</head>
+<body>
+<main class="page">
+    <p class="kicker">Lesson 0002 · Protocol</p>
+    <h1>握手之后：读懂 WebSocket 帧</h1>
+    <p class="lead">本课的唯一目标：看到一段 WebSocket 帧数据时，你能判断它是文本、控制帧还是分片，并能解释连接如何关闭。</p>
+
+    <div class="note">
+        <strong>前置回忆：</strong>上一课的 <code>101 Switching Protocols</code> 只代表协议切换成功。之后的通信进入 WebSocket 帧阶段，不再是一个个独立的 HTTP 请求。
+    </div>
+
+    <h2>1. 消息不是帧</h2>
+    <p>业务上说的“发送一条消息”，在协议层可能由一个或多个帧组成。短文本通常是一条完整帧；较大的消息可以被拆成多条帧，最后一帧通过 <code>FIN=1</code> 表示消息结束。</p>
+
+    <table>
+        <thead><tr><th>概念</th><th>回答的问题</th></tr></thead>
+        <tbody>
+        <tr><td>消息（message）</td><td>业务层收到的完整文本或二进制内容是什么？</td></tr>
+        <tr><td>帧（frame）</td><td>协议层如何分段、标记类型并传输这段内容？</td></tr>
+        <tr><td>控制帧（control frame）</td><td>连接层是否需要 Ping、Pong 或 Close？</td></tr>
+        </tbody>
+    </table>
+
+    <h2>2. 帧的骨架</h2>
+    <img src="../assets/frame-structure.svg" alt="WebSocket 帧字段和控制帧结构图" style="width:100%;height:auto">
+    <pre>  0                   1                   2                   3
+  0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7
+ +-+-+-+-+-------+-+-------------+-------------------------------+
+ |F|R|R|R| opcode|M| Payload len | Extended length / Mask / Data  |
+ |I|S|S|S|       |A|             |                               |
+ |N|V|V|V|       |S|             |                               |
+ +-+-+-+-+-------+-+-------------+-------------------------------+</pre>
+
+    <table>
+        <thead><tr><th>字段</th><th>作用</th></tr></thead>
+        <tbody>
+        <tr><td><code>FIN</code></td><td>是否是这条消息的最后一帧。<code>1</code> 表示结束。</td></tr>
+        <tr><td><code>RSV1-3</code></td><td>扩展保留位。没有协商扩展时应为 <code>0</code>。</td></tr>
+        <tr><td><code>opcode</code></td><td>标识帧类型：文本、二进制、Continuation、Close、Ping 或 Pong。</td></tr>
+        <tr><td><code>MASK</code></td><td>是否带掩码。客户端发往服务端的帧必须掩码。</td></tr>
+        <tr><td><code>Payload length</code></td><td>Payload 的长度；较长内容会使用扩展长度字段。</td></tr>
+        <tr><td><code>Masking key</code></td><td>MASK 为 1 时存在，用于对 Payload 做异或。</td></tr>
+        <tr><td><code>Payload data</code></td><td>实际的文本、二进制或控制数据。</td></tr>
+        </tbody>
+    </table>
+
+    <div class="note">
+        <strong>方向规则：</strong>客户端发送给服务端的帧必须掩码，服务端发送给客户端的帧不应掩码。掩码是协议层防止特定代理误处理数据的机制，不是加密，也不是认证。真正的保密性来自 TLS，即 <code>wss://</code>。
+    </div>
+
+    <h2>3. 常见 opcode</h2>
+    <table>
+        <thead><tr><th>opcode</th><th>类型</th><th>用途</th></tr></thead>
+        <tbody>
+        <tr><td><code>0x0</code></td><td>Continuation</td><td>延续一条被分片的消息。</td></tr>
+        <tr><td><code>0x1</code></td><td>Text</td><td>UTF-8 文本消息。</td></tr>
+        <tr><td><code>0x2</code></td><td>Binary</td><td>二进制消息。</td></tr>
+        <tr><td><code>0x8</code></td><td>Close</td><td>开始或响应关闭握手。</td></tr>
+        <tr><td><code>0x9</code></td><td>Ping</td><td>请求对端尽快回复 Pong。</td></tr>
+        <tr><td><code>0xA</code></td><td>Pong</td><td>响应 Ping，或作为探活信息。</td></tr>
+        </tbody>
+    </table>
+    <p>控制帧不能被分片，Payload 长度不能超过 125 字节。浏览器的 JavaScript WebSocket API 通常不会直接暴露发送 Ping 的方法；服务端或基础设施可以负责协议级 Ping，业务代码也常使用带时间戳的业务心跳。</p>
+
+    <h2>3.1 子协议、扩展和关闭码</h2>
+    <p>握手阶段还可以协商两个容易被忽略的能力：</p>
+    <ul>
+        <li><code>Sec-WebSocket-Protocol</code> 用于协商应用层子协议，例如 STOMP；它决定消息语义，不改变底层帧格式。</li>
+        <li><code>Sec-WebSocket-Extensions</code> 用于协商协议扩展，例如 <code>permessage-deflate</code>；压缩会节省带宽，但会增加 CPU 和排错复杂度。</li>
+    </ul>
+    <p>Close 帧还可以携带关闭码。常见含义包括：<code>1000</code> 正常关闭、<code>1001</code> 对端离开、<code>1002</code> 协议错误、<code>1003</code> 不支持的数据类型、<code>1008</code> 策略拒绝、<code>1011</code> 服务端异常。重连策略必须结合关闭码，不应对所有断开都无限重连。</p>
+
+    <h2>4. 手工解读两条帧</h2>
+    <p>第一条帧：</p>
+    <pre>81 05 48 65 6c 6c 6f</pre>
+    <p><code>0x81</code> 表示 <code>FIN=1</code>、<code>opcode=1</code>，即一条完整文本消息；<code>0x05</code> 表示未掩码且长度为 5；Payload 是 ASCII 文本 <code>Hello</code>。</p>
+
+    <p>第二条帧：</p>
+    <pre>81 85 37 fa 21 3d 7f 9f 4d 51 58</pre>
+    <p><code>0x85</code> 表示 <code>FIN=1</code>、文本帧、MASK=1、Payload 长度为 5。接下来的 4 个字节 <code>37 fa 21 3d</code> 是 Masking Key，后面的 5 个字节需要逐字节异或还原为 <code>Hello</code>。</p>
+
+    <h2>5. 连接生命周期</h2>
+    <p>浏览器 WebSocket 对象的 <code>readyState</code> 用四个状态表达生命周期：</p>
+    <table>
+        <thead><tr><th>状态</th><th>含义</th><th>常见动作</th></tr></thead>
+        <tbody>
+        <tr><td><code>CONNECTING</code></td><td>正在建立连接。</td><td>等待握手结果，不发送业务消息。</td></tr>
+        <tr><td><code>OPEN</code></td><td>握手完成，可以通信。</td><td>发送和接收消息。</td></tr>
+        <tr><td><code>CLOSING</code></td><td>关闭握手已经开始。</td><td>停止接受新的业务发送。</td></tr>
+        <tr><td><code>CLOSED</code></td><td>连接已经关闭。</td><td>判断是否需要重连和清理资源。</td></tr>
+        </tbody>
+    </table>
+    <p>正常关闭不是简单地断开 TCP：一方发送 Close 帧，另一方回复 Close 帧，随后连接关闭。异常断网、进程崩溃或代理超时可能没有机会完成这个关闭握手，因此服务端仍需要清理连接状态。</p>
+
+    <h2>6. 练习：先回忆，再验证</h2>
+    <div class="exercise">
+        <p>不查资料，回答下面 5 个问题。答案可以点击展开，但建议先自己写：</p>
+        <ol>
+            <li>
+                为什么“一条业务消息”不一定对应“一条 WebSocket 帧”？
+                <details class="answer">
+                    <summary>查看答案</summary>
+                    <p>消息可能因为长度被分片传输，由多个帧组成。第一帧带文本或二进制 opcode，中间帧使用 Continuation，最后一帧通过 <code>FIN=1</code> 标记消息结束。</p>
+                </details>
+            </li>
+            <li>
+                客户端发给服务端的帧为什么必须掩码？掩码是否等于加密？
+                <details class="answer">
+                    <summary>查看答案</summary>
+                    <p>这是 RFC 规定的方向性协议要求，用来避免某些代理把可控数据误认为缓存或请求。掩码只是异或变换，不提供保密性；需要保密时使用 TLS，也就是 <code>wss://</code>。</p>
+                </details>
+            </li>
+            <li>
+                <code>Ping/Pong</code>、业务心跳和 TCP keepalive 分别处于什么层次？
+                <details class="answer">
+                    <summary>查看答案</summary>
+                    <p>Ping/Pong 是 WebSocket 协议层控制帧；业务心跳是应用层消息；TCP keepalive 是传输层探测。它们的触发方式、可见位置和能发现的问题不同，不能简单互相替代。</p>
+                </details>
+            </li>
+            <li>
+                为什么服务端不能只在收到 Close 帧时清理会话？
+                <details class="answer">
+                    <summary>查看答案</summary>
+                    <p>断网、进程崩溃或代理超时可能导致连接直接消失，没有机会发送 Close 帧。服务端还需要结合底层断开事件、读写超时和心跳检测，最终清理连接状态。</p>
+                </details>
+            </li>
+            <li>
+                <code>Sec-WebSocket-Protocol</code> 和 <code>Sec-WebSocket-Extensions</code> 分别解决什么问题？
+                <details class="answer">
+                    <summary>查看答案</summary>
+                    <p>Protocol 用于协商应用层消息语义，例如 STOMP；Extensions 用于协商压缩等协议扩展，例如 <code>permessage-deflate</code>。前者改变应用层约定，后者改变协议处理能力和成本。</p>
+                </details>
+            </li>
+        </ol>
+    </div>
+
+    <div class="quiz" data-quiz>
+        <p><strong>快速检查：</strong>十六进制帧头 <code>0x81</code> 表示什么？</p>
+        <button data-correct="false">分片结束的二进制帧</button>
+        <button data-correct="true">完整结束的文本帧</button>
+        <button data-correct="false">未结束的 Ping 控制帧</button>
+        <p class="feedback" aria-live="polite"></p>
+    </div>
+
+    <nav class="lesson-nav" aria-label="课程导航">
+        <a href="0001-opening-handshake-and-devtools.html">← 上一课：Opening Handshake 与 DevTools</a>
+        <a class="next" href="0003-spring-boot-websocket-echo.html">下一课：Spring Boot 双向消息 Demo →</a>
+    </nav>
+
+    <h2>本课参考</h2>
+    <ul>
+        <li><a href="https://www.rfc-editor.org/rfc/rfc6455#section-5.2">RFC 6455 §5.2：Base Framing Protocol</a></li>
+        <li><a href="https://www.rfc-editor.org/rfc/rfc6455#section-5.3">RFC 6455 §5.3：掩码</a></li>
+        <li><a href="https://www.rfc-editor.org/rfc/rfc6455#section-5.5">RFC 6455 §5.5：控制帧</a></li>
+        <li><a href="https://www.rfc-editor.org/rfc/rfc6455#section-7.4">RFC 6455 §7.4：关闭状态码</a></li>
+        <li><a href="https://www.rfc-editor.org/rfc/rfc6455#section-9">RFC 6455 §9：扩展与子协议</a></li>
+        <li><a href="../reference/rfc6455-03-data-framing.html">参考文档：RFC 6455 §5 数据帧与控制帧</a></li>
+        <li><a href="https://developer.mozilla.org/en-US/docs/Web/API/WebSocket/readyState">MDN WebSocket.readyState</a></li>
+        <li><a href="0001-opening-handshake-and-devtools.html">上一课：Opening Handshake 与 DevTools</a></li>
+        <li><a href="../reference/websocket-basics.html">WebSocket 基础速查</a></li>
+    </ul>
+
+    <p class="footer">完成练习后把你的答案发给我。我会检查你是否区分了消息、帧和控制帧，然后进入 Spring Boot 4.1.1 的最小双向消息 Demo。</p>
+</main>
+<script src="../assets/quiz.js" defer></script>
+</body>
+</html>

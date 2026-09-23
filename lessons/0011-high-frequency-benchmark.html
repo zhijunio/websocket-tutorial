@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>第 11 课：高频小消息基准</title>
+    <link rel="stylesheet" href="../assets/styles.css">
+</head>
+<body>
+<main class="page">
+    <p class="kicker">Lesson 0011 · G3</p>
+    <h1>用数据观察 WebSocket 性能</h1>
+    <p class="lead">本课的唯一目标：建立可重复的高频小消息基准，区分吞吐、延迟、错误率、客户端资源和服务端资源。</p>
+
+    <div class="note"><strong>G3 基线：</strong>100 个客户端，每客户端每秒 10 条，约 256 字节，持续 60 秒，重复 3 次。<code>p95 &lt; 200ms</code> 是学习基线，不是生产 SLO。</div>
+    <p>本课独立项目：<a href="../examples/index.html#example-0011"><code>examples/0011-high-frequency-benchmark</code></a>。</p>
+
+    <h2>1. 测量路径</h2>
+    <img src="../assets/benchmark-flow.svg" alt="WebSocket 性能基准测量路径图" style="width:100%;height:auto">
+    <p>客户端为每条消息写入唯一 ID 和发送时间，服务端原样回显，客户端根据 ID 计算往返延迟。这个设计能测到端到端 RTT，但不能直接等同于服务端处理时间。</p>
+    <table>
+        <thead><tr><th>指标</th><th>含义</th><th>来源</th></tr></thead>
+        <tbody>
+        <tr><td>sent/received</td><td>发送和收到回显的数量。</td><td>负载客户端。</td></tr>
+        <tr><td>throughput</td><td>单位时间内收到的回显数量。</td><td>负载客户端。</td></tr>
+        <tr><td>p50/p95</td><td>RTT 分布的中位数和高分位延迟。</td><td>负载客户端。</td></tr>
+        <tr><td>error rate</td><td>连接、发送、回显匹配或协议错误比例。</td><td>负载客户端和服务端日志。</td></tr>
+        <tr><td>CPU/memory</td><td>服务端资源消耗和可能的瓶颈。</td><td>Docker stats、JVM 指标。</td></tr>
+        </tbody>
+    </table>
+
+    <h2>2. 源码导读：负载如何生成</h2>
+    <pre>LoadTestRunner
+    ├─ 创建 N 个 LoadClient
+    ├─ 等待全部 WebSocket OPEN
+    ├─ scheduleAtFixedRate(send, 100ms)
+    └─ 汇总 sent / received / errors / latencies
+
+LoadClient
+    ├─ payload(id, timestamp, padding)
+    ├─ pending[id] = send time
+    └─ onText → pending.remove(id) → record RTT
+
+EchoWebSocketHandler
+    └─ session.sendMessage(message)</pre>
+    <p><a href="../examples/0011-high-frequency-benchmark/src/main/java/com/example/websocket/LoadTestRunner.java">LoadTestRunner</a> 使用 JDK 自带的 <code>java.net.http.WebSocket</code>，减少压测工具抽象，方便读懂连接、发送和回调。<a href="../examples/0011-high-frequency-benchmark/src/main/java/com/example/websocket/LatencyStats.java">LatencyStats</a> 用 nearest-rank 方式计算百分位，测试中明确了计算规则。</p>
+    <p>服务端<a href="../examples/0011-high-frequency-benchmark/src/main/java/com/example/websocket/EchoWebSocketHandler.java">EchoWebSocketHandler</a>对同一 session 的发送加锁，避免并发写入交错；这只是正确性保护，不代表已经解决慢客户端和背压。</p>
+
+    <h2>3. 运行三次基线</h2>
+    <pre>cd examples/0011-high-frequency-benchmark
+mvn test
+mvn spring-boot:run</pre>
+    <p>另开终端执行：</p>
+    <pre>mvn -q exec:java \
+  -Dexec.mainClass=com.example.websocket.LoadTestRunner \
+  -Dexec.args="100 10 60 ws://localhost:8080/ws/load"</pre>
+    <p>严格重复三次，记录 Java 版本、机器、JVM 参数、预热状态、服务端日志和每次结果。服务端 CPU/内存需要单独记录；若放入容器，使用 <code>docker stats --no-stream &lt;container&gt;</code>。</p>
+
+    <h2>4. 如何解释结果</h2>
+    <ul>
+        <li>p50 稳定但 p95 抖高，通常说明尾部请求受调度、GC、锁竞争或慢客户端影响。</li>
+        <li>sent 高、received 低，先查连接错误、发送失败、服务端关闭和回显匹配，不要直接称为吞吐下降。</li>
+        <li>吞吐接近目标但 CPU 过高，说明系统可能只是“完成了”，不代表有足够容量余量。</li>
+        <li>三次结果差异很大，先改善实验稳定性，再讨论优化；不要从单次结果推断瓶颈。</li>
+    </ul>
+
+    <h2>5. 失败案例</h2>
+    <table>
+        <thead><tr><th>现象</th><th>优先检查</th></tr></thead>
+        <tbody>
+        <tr><td>连接无法在 30 秒内全部打开</td><td>端口、服务启动、文件描述符、线程和握手错误。</td></tr>
+        <tr><td>发送数量明显不足</td><td>调度器、连接状态、客户端 CPU 和 sendText 异常。</td></tr>
+        <tr><td>p95 远高于 p50</td><td>GC、线程池、锁、网络抖动、慢客户端和消息堆积。</td></tr>
+        <tr><td>服务端内存持续上涨</td><td>未清理 session、未完成发送、无界队列或测试结束后连接未关闭。</td></tr>
+        </tbody>
+    </table>
+
+    <h2>6. 练习：先回忆，再验证</h2>
+    <div class="exercise">
+        <p>完成至少一次基准后回答下面 4 个问题：</p>
+        <ol>
+            <li>为什么本课同时记录 p50 和 p95？<details class="answer"><summary>查看答案</summary><p>p50 描述典型请求，p95 暴露尾部延迟。只看平均值或 p50 可能掩盖少量但严重的排队、GC 或慢客户端问题。</p></details></li>
+            <li>为什么客户端 RTT 不能直接当作服务端处理时间？<details class="answer"><summary>查看答案</summary><p>RTT 包含客户端调度、网络传输、代理、服务端排队和处理、回传以及客户端回调时间，不能隔离其中单一阶段。</p></details></li>
+            <li>为什么要重复三次而不是只跑一次？<details class="answer"><summary>查看答案</summary><p>单次结果可能受 JVM 预热、GC、机器背景负载和网络抖动影响。重复运行可以观察方差并避免过度解读偶然结果。</p></details></li>
+            <li>为什么“没有错误”不等于性能合格？<details class="answer"><summary>查看答案</summary><p>系统可能在高 CPU、严重尾延迟或低容量余量下完成全部消息。性能验收必须同时看吞吐、延迟、错误率和资源。</p></details></li>
+        </ol>
+    </div>
+
+    <div class="quiz" data-quiz>
+        <p><strong>快速检查：</strong>p95 主要帮助发现什么？</p>
+        <button data-correct="false">所有请求的精确平均值</button>
+        <button data-correct="true">尾部请求的延迟表现</button>
+        <button data-correct="false">MQTT Broker 的订阅数量</button>
+        <p class="feedback" aria-live="polite"></p>
+    </div>
+
+    <nav class="lesson-nav" aria-label="课程导航">
+        <a href="0010-mqtt-websocket-bridge.html">← 上一课：MQTT 桥接</a>
+        <a class="next" href="0012-final-assessment-and-interview.html">下一课：结业验收与面试演练 →</a>
+    </nav>
+
+    <h2>本课参考</h2>
+    <ul>
+        <li><a href="https://docs.oracle.com/en/java/javase/25/docs/api/java.net.http/java/net/http/WebSocket.html">Java 25 WebSocket API</a></li>
+        <li><a href="https://docs.spring.io/spring-framework/reference/web/websocket/server.html">Spring WebSocket Server</a></li>
+        <li><a href="../examples/index.html#example-0011">本课独立示例</a></li>
+    </ul>
+
+    <p class="footer">完成三次基准并记录结果后，把输出和 CPU/内存数据发给我。下一课进行 G1/G2/G3 结业验收、故障排查和面试表达。</p>
+</main>
+<script src="../assets/quiz.js" defer></script>
+</body>
+</html>

@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 420" role="img" aria-labelledby="title desc">
+  <title id="title">轮询、长轮询与 WebSocket 连接模型对比</title>
+  <desc id="desc">三条时间线分别展示反复轮询、长轮询和 WebSocket 的请求与消息方向。</desc>
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+      <path d="M0,0 L0,6 L9,3 z" fill="#165d63"/>
+    </marker>
+    <style>
+      .label { font: 700 18px system-ui, sans-serif; fill: #17202a; }
+      .small { font: 15px ui-monospace, monospace; fill: #17202a; }
+      .muted { font: 14px system-ui, sans-serif; fill: #5e6b78; }
+      .line { stroke: #b4c6c3; stroke-width: 2; stroke-dasharray: 7 7; }
+      .arrow { stroke: #165d63; stroke-width: 2.5; marker-end: url(#arrow); }
+      .box { fill: #e4f0ee; stroke: #165d63; stroke-width: 1.5; }
+    </style>
+  </defs>
+  <rect width="900" height="420" fill="#fbfaf7"/>
+  <text x="450" y="34" text-anchor="middle" class="label">三种连接模型</text>
+  <text x="150" y="75" text-anchor="middle" class="label">客户端</text>
+  <text x="750" y="75" text-anchor="middle" class="label">服务端</text>
+  <line x1="150" y1="90" x2="150" y2="370" class="line"/>
+  <line x1="750" y1="90" x2="750" y2="370" class="line"/>
+
+  <text x="30" y="120" class="label">轮询</text>
+  <line x1="170" y1="125" x2="730" y2="125" class="arrow"/>
+  <line x1="730" y1="155" x2="170" y2="155" class="arrow"/>
+  <line x1="170" y1="185" x2="730" y2="185" class="arrow"/>
+  <text x="450" y="112" text-anchor="middle" class="small">request</text>
+  <text x="450" y="177" text-anchor="middle" class="muted">重复请求，即使没有新消息</text>
+
+  <text x="30" y="235" class="label">长轮询</text>
+  <line x1="170" y1="240" x2="730" y2="240" class="arrow"/>
+  <line x1="730" y1="300" x2="170" y2="300" class="arrow"/>
+  <text x="450" y="227" text-anchor="middle" class="small">request waits</text>
+  <text x="450" y="292" text-anchor="middle" class="muted">有消息或超时后响应，再次请求</text>
+
+  <text x="30" y="345" class="label">WebSocket</text>
+  <line x1="170" y1="350" x2="730" y2="350" class="arrow"/>
+  <text x="450" y="338" text-anchor="middle" class="small">HTTP Upgrade → 101</text>
+  <path d="M730 370 C560 405 340 405 170 370" fill="none" class="arrow"/>
+  <text x="450" y="403" text-anchor="middle" class="muted">同一连接上持续双向通信</text>
+</svg>

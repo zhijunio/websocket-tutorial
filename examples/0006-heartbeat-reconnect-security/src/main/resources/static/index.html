@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>WebSocket Heartbeat</title>
+</head>
+<body>
+<main>
+    <h1>WebSocket heartbeat demo</h1>
+    <button id="connect">Connect</button>
+    <button id="stop">Stop reconnecting</button>
+    <pre id="log"></pre>
+</main>
+<script>
+    const log = (message) => {
+        document.querySelector("#log").textContent += `${new Date().toISOString()} ${message}\n`;
+    };
+    const endpoint = `ws://${location.host}/ws/heartbeat?token=local-dev-token`;
+    let socket;
+    let heartbeatTimer;
+    let reconnectTimer;
+    let reconnectAttempt = 0;
+    let stopped = false;
+
+    function connect() {
+        stopped = false;
+        socket = new WebSocket(endpoint);
+        socket.onopen = () => {
+            reconnectAttempt = 0;
+            log("open");
+            heartbeatTimer = setInterval(() => {
+                if (socket.readyState === WebSocket.OPEN) {
+                    socket.send(JSON.stringify({type: "ping", id: crypto.randomUUID()}));
+                }
+            }, 5000);
+        };
+        socket.onmessage = event => log(`message ${event.data}`);
+        socket.onerror = () => log("error");
+        socket.onclose = event => {
+            clearInterval(heartbeatTimer);
+            log(`close ${event.code}`);
+            if (!stopped) {
+                const delay = Math.min(1000 * 2 ** reconnectAttempt, 8000) + Math.random() * 500;
+                reconnectAttempt += 1;
+                log(`reconnect in ${Math.round(delay)}ms`);
+                reconnectTimer = setTimeout(connect, delay);
+            }
+        };
+    }
+
+    document.querySelector("#connect").onclick = connect;
+    document.querySelector("#stop").onclick = () => {
+        stopped = true;
+        clearTimeout(reconnectTimer);
+        socket?.close(1000, "manual stop");
+    };
+</script>
+</body>
+</html>

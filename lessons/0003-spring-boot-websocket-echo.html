@@ -1,0 +1,212 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>第 3 课：Spring Boot WebSocket 回显服务</title>
+    <link rel="stylesheet" href="../assets/styles.css">
+</head>
+<body>
+<main class="page">
+    <p class="kicker">Lesson 0003 · Spring Boot</p>
+    <h1>用 Spring Boot 跑通双向消息</h1>
+    <p class="lead">本课的唯一目标：用 Java 25 和 Spring Boot 4.1.1 启动一个原生 WebSocket 回显服务，并在 DevTools 中看到 101 和双向消息。</p>
+
+    <div class="note">
+        <strong>代码检查点：</strong>Java 25、Spring Boot 4.1.1、Maven。先使用原生 WebSocket Handler，不引入 STOMP、SockJS 或消息代理，以便把框架配置和 RFC 协议行为对应起来。
+    </div>
+
+    <p>本课的独立示例位于 <a href="../examples/index.html#example-0003"><code>examples/0003-spring-boot-websocket-echo</code></a>。优先运行示例，再回到本课阅读每个文件承担的职责。</p>
+
+    <h2>1. 依赖只保留必要部分</h2>
+    <p>新建 Maven 项目，使用下面的 <code>pom.xml</code>。将 Java 版本显式固定为 25；第一次构建会验证本地 JDK、Maven 和 Spring Boot 版本是否兼容。</p>
+    <pre>&lt;parent&gt;
+    &lt;groupId&gt;org.springframework.boot&lt;/groupId&gt;
+    &lt;artifactId&gt;spring-boot-starter-parent&lt;/artifactId&gt;
+    &lt;version&gt;4.1.1&lt;/version&gt;
+&lt;/parent&gt;
+
+&lt;properties&gt;
+    &lt;java.version&gt;25&lt;/java.version&gt;
+&lt;/properties&gt;
+
+&lt;dependencies&gt;
+    &lt;dependency&gt;
+        &lt;groupId&gt;org.springframework.boot&lt;/groupId&gt;
+        &lt;artifactId&gt;spring-boot-starter-websocket&lt;/artifactId&gt;
+    &lt;/dependency&gt;
+    &lt;dependency&gt;
+        &lt;groupId&gt;org.springframework.boot&lt;/groupId&gt;
+        &lt;artifactId&gt;spring-boot-starter-test&lt;/artifactId&gt;
+        &lt;scope&gt;test&lt;/scope&gt;
+    &lt;/dependency&gt;
+&lt;/dependencies&gt;</pre>
+
+    <h2>2. 启动 Spring Boot</h2>
+    <p>先创建最小启动类。它负责启动 Spring 容器，扫描并装配后面的 Handler 和 WebSocket 配置。</p>
+    <pre>package com.example.websocket;
+
+import org.springframework.boot.SpringApplication;
+import org.springframework.boot.autoconfigure.SpringBootApplication;
+
+@SpringBootApplication
+public class WebSocketApplication {
+
+    public static void main(String[] args) {
+        SpringApplication.run(WebSocketApplication.class, args);
+    }
+}</pre>
+
+    <h2>3. Handler 是协议事件的落点</h2>
+    <p>Handler 接收已经完成 WebSocket 握手的会话和消息。它不是 HTTP Controller：方法接收的是 WebSocket 消息，不是一次 HTTP 请求。</p>
+    <pre>package com.example.websocket;
+
+import java.io.IOException;
+
+import org.springframework.stereotype.Component;
+import org.springframework.web.socket.TextMessage;
+import org.springframework.web.socket.WebSocketSession;
+import org.springframework.web.socket.handler.TextWebSocketHandler;
+
+@Component
+public class EchoWebSocketHandler extends TextWebSocketHandler {
+
+    @Override
+    protected void handleTextMessage(WebSocketSession session,
+                                     TextMessage message) throws IOException {
+        session.sendMessage(new TextMessage("echo: " + message.getPayload()));
+    }
+}</pre>
+
+    <h2>4. 把 URL 映射到 Handler</h2>
+    <pre>package com.example.websocket;
+
+import org.springframework.context.annotation.Configuration;
+import org.springframework.web.socket.config.annotation.EnableWebSocket;
+import org.springframework.web.socket.config.annotation.WebSocketConfigurer;
+import org.springframework.web.socket.config.annotation.WebSocketHandlerRegistry;
+
+@Configuration
+@EnableWebSocket
+public class WebSocketConfig implements WebSocketConfigurer {
+
+    private final EchoWebSocketHandler echoHandler;
+
+    public WebSocketConfig(EchoWebSocketHandler echoHandler) {
+        this.echoHandler = echoHandler;
+    }
+
+    @Override
+    public void registerWebSocketHandlers(WebSocketHandlerRegistry registry) {
+        registry.addHandler(echoHandler, "/ws/echo")
+                .setAllowedOriginPatterns("*");
+    }
+}</pre>
+    <div class="note">
+        <strong>安全边界：</strong><code>setAllowedOriginPatterns("*")</code> 只用于本地练习，方便从不同页面测试。生产环境应列出明确的前端 Origin，并结合身份认证；Origin 校验不是完整的用户鉴权。
+    </div>
+
+    <h2>5. 启动并验证</h2>
+    <p>准备一个带 <code>@SpringBootApplication</code> 的启动类后执行：</p>
+    <pre>mvn -q test
+mvn spring-boot:run</pre>
+    <p>打开任意能运行 JavaScript 的页面，在 DevTools Console 执行：</p>
+    <pre>const socket = new WebSocket("ws://localhost:8080/ws/echo");
+socket.onopen = () =&gt; socket.send("hello");
+socket.onmessage = event =&gt; console.log(event.data);
+socket.onclose = event =&gt; console.log("closed", event.code, event.reason);
+socket.onerror = event =&gt; console.error("websocket error", event);</pre>
+    <p>预期结果：</p>
+    <ol>
+        <li>Network 的 WS 记录中，握手响应为 <code>101 Switching Protocols</code>。</li>
+        <li>Messages/Frames 中看到客户端发送的 <code>hello</code>。</li>
+        <li>收到服务端返回的 <code>echo: hello</code>。</li>
+    </ol>
+
+    <h2>6. 源码导读：一条消息经过哪里</h2>
+    <p>先看<a href="../examples/0003-spring-boot-websocket-echo/src/main/java/com/example/websocket/WebSocketApplication.java">启动类</a>：它只负责启动 Spring 容器。真正的 WebSocket 路径在<a href="../examples/0003-spring-boot-websocket-echo/src/main/java/com/example/websocket/WebSocketConfig.java">配置类</a>中注册。</p>
+    <pre>浏览器连接 /ws/echo
+        ↓
+WebSocketConfig.registerWebSocketHandlers
+        ↓
+EchoWebSocketHandler.handleTextMessage
+        ↓
+session.sendMessage("echo: ...")</pre>
+    <img src="../assets/spring-handler-flow.svg" alt="Spring WebSocket Handler 消息处理调用链" style="width:100%;height:auto">
+    <p><a href="../examples/0003-spring-boot-websocket-echo/src/main/java/com/example/websocket/EchoWebSocketHandler.java">Handler</a> 不负责判断 URL，也不负责创建连接；它只处理已经完成握手的文本消息。这个边界让握手排错、路径映射和业务消息处理可以分别验证。</p>
+    <p><a href="../examples/0003-spring-boot-websocket-echo/src/test/java/com/example/websocket/WebSocketApplicationTests.java">测试</a>目前只证明 Spring 容器能启动，不证明浏览器真的完成了 WebSocket 握手和回显；后者仍需要 DevTools 或集成测试验证。</p>
+
+    <h2>7. 用失败现象定位层次</h2>
+    <table>
+        <thead><tr><th>现象</th><th>优先检查</th></tr></thead>
+        <tbody>
+        <tr><td>连接返回 404</td><td>检查路径是否为 <code>/ws/echo</code>，以及 Handler 是否注册。</td></tr>
+        <tr><td>连接返回 403</td><td>检查 Origin 配置、反向代理策略和认证拦截器。</td></tr>
+        <tr><td>没有 101</td><td>先看是否启动了正确端口，以及请求是否进入 WebSocket 映射。</td></tr>
+        <tr><td>101 后没有回显</td><td>检查 <code>handleTextMessage</code> 是否被调用和服务端日志。</td></tr>
+        <tr><td>服务端能回显但无法扩展到多客户端</td><td>当前 Handler 只处理单个 Session，广播需要显式维护会话集合。</td></tr>
+        </tbody>
+    </table>
+
+    <h2>8. 练习：先回忆，再验证</h2>
+    <div class="exercise">
+        <p>完成本地启动后，回答下面 4 个问题。不要只贴代码，说明每个答案对应哪一层：</p>
+        <ol>
+            <li>
+                为什么这里使用 <code>TextWebSocketHandler</code>，而不是 <code>@RestController</code>？
+                <details class="answer">
+                    <summary>查看答案</summary>
+                    <p><code>TextWebSocketHandler</code> 处理握手完成后的 WebSocket 文本消息和会话；<code>@RestController</code> 处理独立的 HTTP 请求/响应，不能直接代表持续的 WebSocket 消息通道。</p>
+                </details>
+            </li>
+            <li>
+                <code>registry.addHandler(echoHandler, "/ws/echo")</code> 与普通 HTTP 路由有什么不同？
+                <details class="answer">
+                    <summary>查看答案</summary>
+                    <p>它把 WebSocket 握手路径映射到 Handler。请求先以 HTTP Upgrade 到达该路径，返回 101 后，同一连接上的后续消息由 Handler 接收，而不是每条消息重新走 HTTP Controller。</p>
+                </details>
+            </li>
+            <li>
+                为什么 <code>setAllowedOriginPatterns("*")</code> 不能直接用于生产？
+                <details class="answer">
+                    <summary>查看答案</summary>
+                    <p>它允许任意 Origin 发起浏览器连接，扩大了跨站连接的范围。生产环境应限制可信 Origin，并单独设计 Cookie、Token 或其他身份认证和授权策略。</p>
+                </details>
+            </li>
+            <li>
+                如果连接返回 101 但收不到回显，你会按什么顺序排查？
+                <details class="answer">
+                    <summary>查看答案</summary>
+                    <p>先确认客户端确实发送了文本消息，再看 Handler 是否被调用、Payload 是否正确、服务端是否抛异常，最后检查 <code>session.sendMessage</code> 和连接是否在发送前已经关闭。</p>
+                </details>
+            </li>
+        </ol>
+    </div>
+
+    <div class="quiz" data-quiz>
+        <p><strong>快速检查：</strong>哪个结果证明 HTTP 握手已经升级为 WebSocket？</p>
+        <button data-correct="false">服务端日志出现启动完成</button>
+        <button data-correct="true">Network 响应为 101</button>
+        <button data-correct="false">浏览器创建 WebSocket 对象</button>
+        <p class="feedback" aria-live="polite"></p>
+    </div>
+
+    <nav class="lesson-nav" aria-label="课程导航">
+        <a href="0002-frames-and-connection-lifecycle.html">← 上一课：WebSocket 帧与连接生命周期</a>
+        <a class="next" href="0004-jakarta-server-endpoint.html">下一课：Jakarta @ServerEndpoint 对照 →</a>
+    </nav>
+
+    <h2>本课参考</h2>
+    <ul>
+        <li><a href="https://docs.spring.io/spring-framework/reference/web/websocket/server.html">Spring Framework：WebSocket Server Configuration</a></li>
+        <li><a href="https://docs.spring.io/spring-boot/reference/">Spring Boot Reference Documentation</a></li>
+        <li><a href="https://www.rfc-editor.org/rfc/rfc6455#section-4.2.2">RFC 6455 §4.2.2：Opening Handshake</a></li>
+        <li><a href="0002-frames-and-connection-lifecycle.html">上一课：WebSocket 帧与连接生命周期</a></li>
+        <li><a href="../reference/websocket-basics.html">WebSocket 基础速查</a></li>
+    </ul>
+
+    <p class="footer">完成本地回显和课内练习后，把构建结果、DevTools 状态码和你的答案发给我。下一课将用 Jakarta <code>@ServerEndpoint</code> 实现同一个端点并比较两种编程模型。</p>
+</main>
+<script src="../assets/quiz.js" defer></script>
+</body>
+</html>

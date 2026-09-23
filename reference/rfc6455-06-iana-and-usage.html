@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>RFC 6455 §11-§14 导读：注册表、复用与参考文献</title>
+    <link rel="stylesheet" href="../assets/styles.css">
+</head>
+<body>
+<main class="page">
+    <p class="kicker">Reference · RFC 6455 §11-§14</p>
+    <h1>RFC 6455 §11-§14：注册表、复用与规范边界</h1>
+    <p class="lead">最后四节不像前面的握手和帧那样直接规定运行时步骤，但它们解释了 WebSocket 如何进入互联网协议生态：哪些名字由 IANA 统一登记、其他规范如何复用 WebSocket，以及 RFC 中哪些内容是规范要求、哪些内容只是历史与参考资料。</p>
+
+    <div class="note">
+        <strong>先抓住结论：</strong>§11 是“命名和分配规则”，不是一次连接的握手流程；§12 是“如何在其他规范中调用 WebSocket 能力”；§13 是作者和参与者致谢；§14 列出 RFC 依赖的规范性和信息性参考文献。
+    </div>
+
+    <h2>1. §11 IANA Considerations：把协议名称变成公共契约</h2>
+    <p>IANA 注册表的作用，是防止不同规范或实现重复占用同一个协议名字、版本号、关闭码、opcode 或 RSV 位。注册表解决的是跨实现的命名协调问题；它不会替应用完成认证、路由、压缩或消息投递。</p>
+
+    <h3>1.1 URI scheme：<code>ws</code> 与 <code>wss</code></h3>
+    <table>
+        <thead><tr><th>Scheme</th><th>语义</th><th>工程含义</th></tr></thead>
+        <tbody>
+        <tr><td><code>ws://</code></td><td>使用 WebSocket 打开连接。</td><td>底层连接不由 URI 要求使用 TLS；生产环境通常需要评估明文风险。</td></tr>
+        <tr><td><code>wss://</code></td><td>使用 TLS 保护的 WebSocket。</td><td>提供 TLS 的机密性、完整性和端点认证；不自动完成业务授权。</td></tr>
+        </tbody>
+    </table>
+    <p>两种 URI 都由 authority、path 和可选 query 组成。path 与 query 会成为发给服务端的 resource name，用于在同一个 Host 和端口上区分服务。也就是说，<code>/chat?room=blue</code> 不是“只是前端字符串”，它参与了连接目标的识别；但其中的 query 是否承载身份票据，属于应用安全设计。</p>
+
+    <h3>1.2 Upgrade token 与握手 Header</h3>
+    <p>RFC 将 <code>WebSocket</code> 注册为 HTTP Upgrade token，并登记了握手用的 <code>Sec-WebSocket-*</code> Header。这些登记让协议参与者共享稳定的字段名和职责：</p>
+    <table>
+        <thead><tr><th>字段</th><th>方向</th><th>登记所表达的职责</th></tr></thead>
+        <tbody>
+        <tr><td><code>Sec-WebSocket-Key</code></td><td>客户端 → 服务端</td><td>参与服务端生成 Accept，帮助确认这是一次有效的 WebSocket 握手；不是用户认证。</td></tr>
+        <tr><td><code>Sec-WebSocket-Accept</code></td><td>服务端 → 客户端</td><td>确认服务端愿意建立 WebSocket 连接；不是授权凭证。</td></tr>
+        <tr><td><code>Sec-WebSocket-Extensions</code></td><td>双向协商</td><td>请求并确认连接使用的协议扩展。</td></tr>
+        <tr><td><code>Sec-WebSocket-Protocol</code></td><td>双向协商</td><td>选择连接上的应用层子协议，例如某个 STOMP 变体。</td></tr>
+        <tr><td><code>Sec-WebSocket-Version</code></td><td>请求为客户端，失败响应可由服务端返回</td><td>协商协议版本；版本号更高不自动意味着向后兼容。</td></tr>
+        </tbody>
+    </table>
+    <p>一个很实用的排错边界是：看到 Header 被注册，并不表示框架一定已正确实现它。仍要观察线上握手请求和响应，检查字段出现次数、值和协商结果是否符合 RFC。</p>
+
+    <h2>2. §11.4–§11.9：扩展、子协议和编号空间</h2>
+    <table>
+        <thead><tr><th>注册表</th><th>解决什么冲突</th><th>本课程中的对应物</th></tr></thead>
+        <tbody>
+        <tr><td>Extension Name</td><td>扩展名称、定义文档和已知不兼容关系。</td><td><code>permessage-deflate</code> 等握手扩展。</td></tr>
+        <tr><td>Subprotocol Name</td><td>应用层子协议标识和定义文档。</td><td>STOMP over WebSocket；业务协议也应有清晰版本和契约。</td></tr>
+        <tr><td>Version Number</td><td>WebSocket 协议版本号。</td><td>RFC 6455 使用版本 <code>13</code>。</td></tr>
+        <tr><td>Close Code</td><td>关闭原因编号及其唯一语义。</td><td><code>1000</code>、<code>1002</code>、<code>1008</code>、<code>1009</code> 和应用自定义范围。</td></tr>
+        <tr><td>Opcode</td><td>帧类型编号。</td><td>文本 <code>1</code>、二进制 <code>2</code>、Close <code>8</code>、Ping <code>9</code>、Pong <code>10</code>。</td></tr>
+        <tr><td>Framing Header Bits</td><td>RSV1、RSV2、RSV3 的扩展分配。</td><td>扩展启用前不能擅自把 RSV 位当成业务标志。</td></tr>
+        </tbody>
+    </table>
+    <p>关闭码尤其容易被误用：<code>3000–3999</code> 可用于库、框架和应用并登记；<code>4000–4999</code> 是私有使用范围。范围可用不等于语义已定义。项目仍必须在消息协议、README、日志和测试中写清“哪个代码表示什么，以及客户端是否应该重连”。</p>
+
+    <h2>3. §12：其他规范如何复用 WebSocket</h2>
+    <p>RFC 6455 把 WebSocket 设计成一个可供其他规范调用的通用双向传输机制。上层规范不必重新发明 TCP 连接、握手、帧和关闭，而是提供连接参数并调用 RFC 定义的算法。</p>
+    <pre>上层规范提供：
+  destination = host + port
+  resource name
+  secure = true / false
+  origin
+  optional subprotocol
+
+RFC 6455 负责：
+  Establish WebSocket Connection
+  Send a WebSocket Message
+  A WebSocket Message Has Been Received
+  Close the WebSocket Connection</pre>
+    <p>这正是“裸 WebSocket”和 STOMP 的关系：STOMP 定义 CONNECT、SUBSCRIBE、SEND、MESSAGE 等应用层语义；WebSocket 负责把这些字节可靠地承载在一条双向连接上。MQTT、私有 JSON 协议或其他规范也可以采用相同的分层方式，但它们不能因此改变 WebSocket 帧的基本规则。</p>
+
+    <h3>3.1 三个必须分开的概念</h3>
+    <table>
+        <thead><tr><th>概念</th><th>回答的问题</th><th>例子</th></tr></thead>
+        <tbody>
+        <tr><td>WebSocket 协议</td><td>字节如何握手、分帧、关闭和报告协议错误？</td><td>101、masking、Ping/Pong、Close。</td></tr>
+        <tr><td>WebSocket 子协议</td><td>连接建立后，Payload 代表什么命令和消息？</td><td>STOMP、项目自定义 JSON 协议。</td></tr>
+        <tr><td>WebSocket 扩展</td><td>是否改变帧或消息的解释、压缩或处理方式？</td><td><code>permessage-deflate</code>。</td></tr>
+        </tbody>
+    </table>
+    <p>因此，<code>Sec-WebSocket-Protocol</code> 和 <code>Sec-WebSocket-Extensions</code> 不能混为一谈：前者选择应用层协议，后者扩展 WebSocket 的解释机制。Spring 的 STOMP 配置、浏览器的子协议参数和容器的压缩配置，分别落在不同层次。</p>
+
+    <h2>4. 用 §12 设计一个新 WebSocket 应用</h2>
+    <ol>
+        <li>先定义 resource name，例如 <code>/chat</code>，不要把所有业务语义塞进 URI。</li>
+        <li>决定是否使用 TLS；面向真实用户的连接通常使用 <code>wss://</code>。</li>
+        <li>决定是否需要子协议。简单回显可以裸 WebSocket；需要订阅、目的地和确认时再评估 STOMP。</li>
+        <li>定义消息格式、版本、大小上限、错误语义、顺序、幂等和重连恢复。</li>
+        <li>只在确实需要压缩或其他帧级能力时启用扩展，并验证 CPU、内存和延迟代价。</li>
+        <li>把 RFC 层、框架层、代理层和业务层的故障指标分开记录。</li>
+    </ol>
+
+    <h2>5. §13：致谢的阅读价值</h2>
+    <p>§13 列出协议演进中参与设计、审阅和讨论的人。它不是实现规则，也不会改变任何握手或帧行为。对学习者而言，它提醒我们：WebSocket 是在 WHATWG、IETF HYBI 工作组和多个领域审阅中逐步形成的协议，规范中的安全、分帧和互操作性要求有明确的工程背景，而不是某个框架的偶然约定。</p>
+
+    <h2>6. §14：规范性参考与信息性参考</h2>
+    <table>
+        <thead><tr><th>类别</th><th>含义</th><th>阅读方式</th></tr></thead>
+        <tbody>
+        <tr><td>Normative References</td><td>理解或实现 RFC 6455 要遵守的基础规范。</td><td>遇到 URI、HTTP、TLS、UTF-8、Origin、Base64、ABNF 等细节时回查。</td></tr>
+        <tr><td>Informative References</td><td>帮助理解背景、已知问题、历史讨论或相关 API，但不是 RFC 6455 的直接实现契约。</td><td>用于理解轮询、浏览器 API、Cookie 和安全背景，不把它们的每句话都当成 WebSocket 帧规则。</td></tr>
+        </tbody>
+    </table>
+    <p>本课程最常回查的依赖包括：HTTP/1.1、URI 通用语法、TLS、UTF-8、随机性、Origin、HTTP Header 注册和 Base64。若某个问题涉及“浏览器 API 怎么表现”，应同时看浏览器 API 文档；若涉及“Spring 如何配置”，应看 Spring 官方文档，而不是把 RFC 当成框架手册。</p>
+
+    <h2>7. 从 RFC 6455 全文得到的排错地图</h2>
+    <pre>没有 101？       → §3–§4：URI、HTTP Upgrade、版本、Key、Origin、代理
+101 后不能通信？ → §5–§6：帧头、masking、opcode、分片、扩展、发送/接收
+连接突然关闭？   → §7–§8：Close、TCP/TLS、UTF-8、状态码、重连退避
+压缩或子协议异常？→ §9、§11、§12：协商结果、注册名称、上层协议边界
+安全或资源风险？ → §10：Origin、认证、TLS、限制、非法数据和日志</pre>
+    <p>这张地图的价值在于先定位层次，再选择工具。DevTools 适合看握手和浏览器事件；抓包适合看真实 Header、帧和关闭；应用日志适合看鉴权、房间、队列和业务错误；指标适合看连接数、延迟、积压和重连风暴。</p>
+
+    <div class="exercise">
+        <strong>自测：</strong>请用自己的话回答：为什么 STOMP 应该被称为 WebSocket 子协议，而 <code>permessage-deflate</code> 应该被称为扩展？如果握手中出现了 <code>Sec-WebSocket-Protocol: v1</code>，这是否意味着服务端已经同意使用 <code>v1</code>？请说明判断依据。
+    </div>
+
+    <h2>官方依据</h2>
+    <ul>
+        <li><a href="https://www.rfc-editor.org/rfc/rfc6455#section-11">RFC 6455 §11：IANA Considerations</a></li>
+        <li><a href="https://www.rfc-editor.org/rfc/rfc6455#section-11.1">RFC 6455 §11.1：<code>ws</code> / <code>wss</code> URI scheme</a></li>
+        <li><a href="https://www.rfc-editor.org/rfc/rfc6455#section-11.3">RFC 6455 §11.3：握手 Header 注册</a></li>
+        <li><a href="https://www.rfc-editor.org/rfc/rfc6455#section-11.4">RFC 6455 §11.4：扩展名称注册表</a></li>
+        <li><a href="https://www.rfc-editor.org/rfc/rfc6455#section-11.5">RFC 6455 §11.5：子协议名称注册表</a></li>
+        <li><a href="https://www.rfc-editor.org/rfc/rfc6455#section-11.7">RFC 6455 §11.7：Close code 注册表</a></li>
+        <li><a href="https://www.rfc-editor.org/rfc/rfc6455#section-12">RFC 6455 §12：从其他规范使用 WebSocket</a></li>
+        <li><a href="https://www.rfc-editor.org/rfc/rfc6455#section-13">RFC 6455 §13：Acknowledgements</a></li>
+        <li><a href="https://www.rfc-editor.org/rfc/rfc6455#section-14">RFC 6455 §14：References</a></li>
+        <li><a href="rfc6455-05-extensions-and-security.html">上一部分：§9-§10 扩展与安全</a></li>
+        <li><a href="rfc6455-guide.html">返回 RFC 6455 总导读</a></li>
+    </ul>
+</main>
+</body>
+</html>

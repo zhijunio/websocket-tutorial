@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>RFC 6455 §1 导读：背景、模型与分层</title>
+    <link rel="stylesheet" href="../assets/styles.css">
+</head>
+<body>
+<main class="page">
+    <p class="kicker">Reference · RFC 6455 §1</p>
+    <h1>RFC 6455 §1：背景、模型与分层</h1>
+    <p class="lead">本篇只解析 RFC 6455 的介绍部分：§1.1 Background、§1.2 Protocol Overview 和 §1.7 Relationship to TCP and HTTP。读完后，你应该能说明 WebSocket 为什么出现，以及握手成功后连接到底变成了什么。</p>
+
+    <div class="note">
+        <strong>规范阅读方法：</strong>RFC 中的 “MUST” 是强制要求，“SHOULD” 是有理由偏离时才可不遵守的建议；本篇先解释设计意图，再指出哪些内容属于规范约束，避免把背景说明误读成实现细节。
+    </div>
+
+    <h2>1. §1.1 Background：它要替代什么</h2>
+    <p>RFC 6455 的背景问题是：浏览器应用需要服务端主动发送更新，但传统 HTTP 主要是客户端发起请求、服务端返回响应。为了模拟实时通信，应用曾经使用多次 HTTP 请求、iframe、XMLHttpRequest、轮询和长轮询。</p>
+
+    <h3>1.1 轮询为什么不理想</h3>
+    <p>轮询通过固定时间间隔反复询问服务端。间隔较长时，消息会等待下一次请求，延迟取决于轮询周期；间隔较短时，大量请求在没有新数据时仍然产生连接调度、请求头和响应开销。</p>
+    <table>
+        <thead><tr><th>策略</th><th>服务端何时返回</th><th>主要问题</th></tr></thead>
+        <tbody>
+        <tr><td>短轮询</td><td>收到请求后立即返回，有消息或无消息都一样</td><td>空请求多，延迟和请求频率互相制约</td></tr>
+        <tr><td>长轮询</td><td>有消息时返回，或等待超时后返回</td><td>超时、重建请求、代理行为和连接占用更复杂</td></tr>
+        <tr><td>HTTP Streaming</td><td>保持一个 HTTP 响应，通过持续写入发送更新</td><td>消息边界、缓冲、代理和断线处理不一致</td></tr>
+        <tr><td>WebSocket</td><td>升级后双方都可在同一连接上发送</td><td>需要处理长连接、心跳、关闭、扩容和背压</td></tr>
+        </tbody>
+    </table>
+
+    <h3>1.2 RFC 的目标不是“让 HTTP 更快”</h3>
+    <p>WebSocket 的目标是提供一种新的、基于 TCP 的双向通信协议，让浏览器应用不必依赖不断创建 HTTP 连接来模拟服务端推送。它关注的是连接和消息传输模型，不自动提供业务可靠性、离线存储、用户授权、消息持久化或多实例路由。</p>
+    <p>因此，WebSocket 不是所有 HTTP 请求的替代品：</p>
+    <ul>
+        <li>普通资源获取、查询、幂等写入和缓存场景，HTTP 通常更合适。</li>
+        <li>聊天、实时协作、在线状态和低延迟推送，WebSocket 更容易表达。</li>
+        <li>如果只需要低频单向通知，长轮询或其他 HTTP 推送方式可能更简单。</li>
+    </ul>
+    <p><a href="https://www.rfc-editor.org/rfc/rfc6455#section-1.1">RFC 6455 §1.1</a> 是非规范性背景说明；它解释“为什么需要这项技术”，真正的协议约束要继续阅读后面的章节。</p>
+
+    <h2>2. §1.2 Protocol Overview：协议由两阶段组成</h2>
+    <p>RFC 6455 的核心模型可以画成两阶段：</p>
+    <pre>阶段一：Opening Handshake
+浏览器 ── HTTP Upgrade 请求 ──→ 服务端
+浏览器 ←─ 101 Switching Protocols ─ 服务端
+
+阶段二：WebSocket 通信
+客户端 ←──── WebSocket 帧 ────→ 服务端
+       Text / Binary / Ping / Pong / Close</pre>
+
+    <h3>2.1 第一阶段：用 HTTP 请求进入协议</h3>
+    <p>客户端先发送一个特殊的 HTTP Upgrade 请求。服务端如果接受，就返回 <code>101 Switching Protocols</code>，表示双方同意把连接切换到 WebSocket 协议。</p>
+    <pre>GET /chat HTTP/1.1
+Host: example.com
+Upgrade: websocket
+Connection: Upgrade
+Sec-WebSocket-Key: &lt;nonce&gt;
+Sec-WebSocket-Version: 13</pre>
+    <p>这里使用 HTTP 的价值是能够复用已有的 Host 路由、端口、代理和网关入口。但“使用 HTTP 完成握手”不等于“后续消息仍然是 HTTP 请求”。</p>
+
+    <h3>2.2 第二阶段：在 TCP 连接上交换帧</h3>
+    <p>握手成功后，双方在同一条 TCP 连接上交换 WebSocket 帧。帧是协议层的传输单元，消息可能由一个帧组成，也可能由多个分片帧组成。控制帧用于 Close、Ping 和 Pong；数据帧用于文本或二进制消息。</p>
+    <table>
+        <thead><tr><th>概念</th><th>所在层</th><th>回答的问题</th></tr></thead>
+        <tbody>
+        <tr><td>TCP 字节流</td><td>传输层</td><td>字节如何可靠、有序地到达对端？</td></tr>
+        <tr><td>WebSocket 帧</td><td>协议层</td><td>如何标记文本、二进制、控制帧和分片？</td></tr>
+        <tr><td>WebSocket 消息</td><td>消息抽象</td><td>一条完整的文本或二进制内容是什么？</td></tr>
+        <tr><td>业务消息</td><td>应用层</td><td>房间、通知、事件和命令具有什么语义？</td></tr>
+        </tbody>
+    </table>
+    <p>这一区分解释了一个常见错误：TCP 的一次读取不等于一条 WebSocket 消息，WebSocket 的一条消息也不一定只对应一个帧。框架通常替你完成了解帧和消息重组，但协议边界仍然存在。</p>
+
+    <h2>3. §1.7 Relationship to TCP and HTTP：真正的分层关系</h2>
+    <p>RFC 对这层关系的关键表述是：WebSocket 是一个独立的、基于 TCP 的协议；它与 HTTP 的关系主要体现在 Opening Handshake 会被 HTTP 服务端解释为一个 HTTP Upgrade 请求。</p>
+    <pre>应用层：业务 JSON / STOMP / 自定义协议
+        ↓
+WebSocket：帧、控制帧、分片、关闭
+        ↓
+TCP：有序字节流、连接、重传
+        ↓
+IP：网络寻址和路由
+
+HTTP 的作用：主要作为连接建立时的 Upgrade 入口</pre>
+
+    <h3>3.1 握手之后还算 HTTP 吗</h3>
+    <p>从网络连接角度看，仍然是同一条 TCP 连接；从协议处理角度看，连接已经进入 WebSocket 协议。之后的数据不应再被当作普通 HTTP 请求和响应解析，而应按 WebSocket 帧解析。</p>
+    <table>
+        <thead><tr><th>阶段</th><th>应该观察什么</th><th>排错重点</th></tr></thead>
+        <tbody>
+        <tr><td>101 之前</td><td>HTTP 请求和响应头</td><td>路径、Host、Upgrade、认证、Origin、代理路由</td></tr>
+        <tr><td>101 之后</td><td>WebSocket 帧和连接事件</td><td>opcode、掩码、Ping/Pong、Close、消息处理和背压</td></tr>
+        </tbody>
+    </table>
+
+    <h3>3.2 <code>ws://</code> 和 <code>wss://</code></h3>
+    <p>RFC §3 定义了 WebSocket URI：<code>ws://</code> 表示普通 WebSocket 连接，<code>wss://</code> 表示通过 TLS 保护的 WebSocket 连接。实践中通常分别使用 80 和 443 作为默认端口，但真正的安全性来自 TLS，而不是 WebSocket 本身。</p>
+    <p>因此，<code>ws://</code> 与 <code>wss://</code> 的差异类似于 HTTP 与 HTTPS 的差异：协议消息模型相同，但传输保护不同。生产环境通常还需要检查 TLS 终止位置、代理到后端的链路以及 Origin 和认证策略。</p>
+
+    <h2>4. RFC §1 能回答什么，不能回答什么</h2>
+    <table>
+        <thead><tr><th>问题</th><th>RFC §1 能提供的答案</th><th>还需要查哪里</th></tr></thead>
+        <tbody>
+        <tr><td>为什么出现 WebSocket？</td><td>为浏览器双向通信减少多次 HTTP 连接和长轮询依赖。</td><td>§1.1，以及当前系统的通信需求。</td></tr>
+        <tr><td>握手后是什么？</td><td>TCP 连接上的 WebSocket 帧协议。</td><td>§4、§5。</td></tr>
+        <tr><td>Key 是否代表用户？</td><td>§1 没有把它定义为身份凭证。</td><td>§4 和 §10.5，另查应用认证设计。</td></tr>
+        <tr><td>多实例如何广播？</td><td>RFC 不定义业务路由和共享状态。</td><td>Spring、消息总线、连接目录和业务协议设计。</td></tr>
+        <tr><td>慢客户端怎么办？</td><td>RFC 提供基本发送/接收模型。</td><td>实现限制、队列、超时、背压和指标。</td></tr>
+        </tbody>
+    </table>
+
+    <h2>5. 用一条真实连接验证理解</h2>
+    <ol>
+        <li>在 DevTools 的 Network → WS 中找到一条 WebSocket 请求。</li>
+        <li>先只看握手：确认是否返回 <code>101</code>，记录 Host、Path、Upgrade 和 Origin。</li>
+        <li>再看握手后的 Messages/Frames：确认后续内容不再是普通 HTTP 响应。</li>
+        <li>最后观察关闭、重连或代理超时，把现象归类到 HTTP、WebSocket、TCP、代理或业务层。</li>
+    </ol>
+
+    <div class="exercise">
+        <strong>自测：</strong>请用自己的话回答：为什么 WebSocket 要用 HTTP 完成握手，却不等于它是“持续发送 HTTP 请求”？答案应同时提到 HTTP Upgrade、101、同一条 TCP 连接和 WebSocket 帧。
+    </div>
+
+    <h2>官方依据</h2>
+    <ul>
+        <li><a href="https://www.rfc-editor.org/rfc/rfc6455#section-1.1">RFC 6455 §1.1：Background</a></li>
+        <li><a href="https://www.rfc-editor.org/rfc/rfc6455#section-1.2">RFC 6455 §1.2：Protocol Overview</a></li>
+        <li><a href="https://www.rfc-editor.org/rfc/rfc6455#section-1.7">RFC 6455 §1.7：Relationship to TCP and HTTP</a></li>
+        <li><a href="https://www.rfc-editor.org/rfc/rfc6455#section-3">RFC 6455 §3：WebSocket URIs</a></li>
+        <li><a href="rfc6455-02-uri-and-handshake.html">下一部分：§3-§4 URI 与 Opening Handshake</a></li>
+        <li><a href="../reference/rfc6455-guide.html">返回 RFC 6455 总导读</a></li>
+        <li><a href="../lessons/0001-opening-handshake-and-devtools.html">回到第一课：Opening Handshake 与 DevTools</a></li>
+    </ul>
+</main>
+</body>
+</html>

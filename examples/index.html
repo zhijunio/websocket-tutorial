@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>WebSocket 示例项目</title>
+    <link rel="stylesheet" href="../assets/styles.css">
+</head>
+<body>
+<main class="page">
+    <p class="kicker">websocket-tutorial · Examples · Java 25 · Spring Boot 4.1.1</p>
+    <h1>示例项目</h1>
+    <p class="lead">每个目录都是独立的 Maven 项目。课程页面可以在线阅读，示例服务需要在本地启动。</p>
+
+    <div class="note">
+        <strong>运行方式：</strong>克隆仓库后进入对应目录，执行 <code>mvn test</code> 验证，再执行 <code>mvn spring-boot:run</code> 启动。需要 Docker 的项目会在表格中标明。
+    </div>
+
+    <table>
+        <thead><tr><th>课程</th><th>项目</th><th>内容</th><th>本地材料</th></tr></thead>
+        <tbody>
+        <tr id="example-0003"><td>0003</td><td><code>0003-spring-boot-websocket-echo</code></td><td>Spring WebSocket Handler 回显端点。</td><td><a href="0003-spring-boot-websocket-echo/README.md">README</a> · <a href="0003-spring-boot-websocket-echo/pom.xml">pom.xml</a></td></tr>
+        <tr id="example-0004"><td>0004</td><td><code>0004-jakarta-server-endpoint</code></td><td>Jakarta <code>@ServerEndpoint</code> 回显端点。</td><td><a href="0004-jakarta-server-endpoint/README.md">README</a> · <a href="0004-jakarta-server-endpoint/pom.xml">pom.xml</a></td></tr>
+        <tr id="example-0005"><td>0005</td><td><code>0005-multi-room-chat</code></td><td>房间隔离、广播和断开清理。</td><td><a href="0005-multi-room-chat/README.md">README</a> · <a href="0005-multi-room-chat/pom.xml">pom.xml</a></td></tr>
+        <tr id="example-0006"><td>0006</td><td><code>0006-heartbeat-reconnect-security</code></td><td>应用心跳、重连、Origin 和握手令牌。</td><td><a href="0006-heartbeat-reconnect-security/README.md">README</a> · <a href="0006-heartbeat-reconnect-security/pom.xml">pom.xml</a></td></tr>
+        <tr id="example-0007"><td>0007</td><td><code>0007-push-notifications-and-replay</code></td><td>在线推送、离线未读通知和补拉。</td><td><a href="0007-push-notifications-and-replay/README.md">README</a> · <a href="0007-push-notifications-and-replay/pom.xml">pom.xml</a></td></tr>
+        <tr id="example-0008"><td>0008</td><td><code>0008-proxy-and-multi-instance</code></td><td>两个服务实例、Nginx 和跨实例投递失败演示。</td><td><a href="0008-proxy-and-multi-instance/README.md">README</a> · <a href="0008-proxy-and-multi-instance/docker-compose.yml">Compose</a></td></tr>
+        <tr id="example-0009"><td>0009</td><td><code>0009-stomp-websocket</code></td><td>STOMP 帧、Spring 消息代理和主题路由。</td><td><a href="0009-stomp-websocket/README.md">README</a> · <a href="0009-stomp-websocket/pom.xml">pom.xml</a></td></tr>
+        <tr id="example-0010"><td>0010</td><td><code>0010-mqtt-websocket-bridge</code></td><td>MQTT Broker 到 Java 后端再到 WebSocket 的桥接。</td><td><a href="0010-mqtt-websocket-bridge/README.md">README</a> · <a href="0010-mqtt-websocket-bridge/docker-compose.yml">Compose</a></td></tr>
+        <tr id="example-0011"><td>0011</td><td><code>0011-high-frequency-benchmark</code></td><td>100 客户端 WebSocket 负载测试和延迟指标。</td><td><a href="0011-high-frequency-benchmark/README.md">README</a> · <a href="0011-high-frequency-benchmark/pom.xml">pom.xml</a></td></tr>
+        </tbody>
+    </table>
+
+    <h2>代码链接说明</h2>
+    <p>课程页面中的 <code>.java</code>、<code>pom.xml</code>、Docker 和配置文件链接保留为仓库源码链接。GitHub Pages 可以展示这些文件，但不能编译或运行它们；请在本地按 README 执行测试和启动命令。</p>
+
+    <nav class="lesson-nav" aria-label="页面导航">
+        <a href="../index.html">← 返回课程首页</a>
+        <a class="next" href="../lessons/0003-spring-boot-websocket-echo.html">从第 0003 课开始 →</a>
+    </nav>
+</main>
+</body>
+</html>

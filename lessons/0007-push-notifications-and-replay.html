@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>第 7 课：推送通知与补拉</title>
+    <link rel="stylesheet" href="../assets/styles.css">
+</head>
+<body>
+<main class="page">
+    <p class="kicker">Lesson 0007 · G2</p>
+    <h1>在线推送，离线补拉</h1>
+    <p class="lead">本课的唯一目标：把“连接在线”与“通知送达”分开建模，让在线用户收到推送，离线用户以后仍能补拉未读消息。</p>
+
+    <div class="note">
+        <strong>G2 目标：</strong>在线推送、断线期间的未读标记或补拉，以及多实例下消息如何到达目标连接。本课先完成单机内存版本；持久化和跨实例路由留到后续课程。
+    </div>
+    <p>本课独立示例：<a href="../examples/index.html#example-0007"><code>examples/0007-push-notifications-and-replay</code></a>。</p>
+
+    <h2>1. 先分清三个动作</h2>
+    <table>
+        <thead><tr><th>动作</th><th>含义</th><th>当前示例</th></tr></thead>
+        <tbody>
+        <tr><td>发布（publish）</td><td>业务系统产生一条面向用户的通知。</td><td>HTTP POST 创建通知。</td></tr>
+        <tr><td>推送（push）</td><td>用户在线时通过 WebSocket 发送给当前连接。</td><td>服务端直接写入 session。</td></tr>
+        <tr><td>补拉（replay）</td><td>用户不在线时，重新连接后读取尚未确认的通知。</td><td>HTTP GET 未读列表，再 ACK。</td></tr>
+        </tbody>
+    </table>
+    <p>WebSocket 只解决实时连接，不自动提供离线存储、消息确认或重放。把这三件事混成“发送成功”，会让断线期间的消息丢失。</p>
+
+    <h2>2. 源码导读：发布路径与连接状态</h2>
+    <pre>POST /api/users/{userId}/notifications
+    ↓
+NotificationController.publish
+    ↓
+NotificationService.publish
+    ├─ onlineUsers 有连接 → session.sendMessage
+    └─ 无连接/发送失败 → unread[userId].add
+
+WebSocket connect/close
+    ├─ connect    → onlineUsers.put(userId, session)
+    └─ disconnect → onlineUsers.remove(userId, session)</pre>
+    <p><a href="../examples/0007-push-notifications-and-replay/src/main/java/com/example/websocket/NotificationService.java">NotificationService</a> 的核心不变量是：在线索引只代表当前连接，不代表通知已经被用户业务确认；未读列表保存的是尚未 ACK 的通知。</p>
+    <p><a href="../examples/0007-push-notifications-and-replay/src/main/java/com/example/websocket/NotificationWebSocketHandler.java">Handler</a> 只维护连接生命周期，<a href="../examples/0007-push-notifications-and-replay/src/main/java/com/example/websocket/NotificationController.java">Controller</a> 负责补拉和确认。分开这两个入口，能看清 WebSocket 和 HTTP 在可靠通知中的不同职责。</p>
+
+    <h2>3. 可靠性取舍</h2>
+    <ul>
+        <li>写入 WebSocket 成功，不等于用户已经看到或处理通知。</li>
+        <li>在线发送失败时，应把通知转入补拉路径，而不是静默丢弃。</li>
+        <li>ACK 需要幂等：重复 ACK 应该得到稳定结果，不应重新产生副作用。</li>
+        <li>生产环境通常使用数据库或消息系统保存通知，并用唯一 ID、序列号或幂等键处理重复和重试。</li>
+    </ul>
+
+    <h2>4. 运行和验证</h2>
+    <pre>cd examples/0007-push-notifications-and-replay
+mvn test
+mvn spring-boot:run</pre>
+    <ol>
+        <li>建立 <code>ws://localhost:8080/ws/notifications?alice</code> 连接。</li>
+        <li>POST 一条通知，确认浏览器立即收到。</li>
+        <li>关闭连接，再 POST 一条通知。</li>
+        <li>GET 未读列表，确认离线通知存在。</li>
+        <li>POST ACK，确认该通知从未读列表移除。</li>
+    </ol>
+
+    <h2>5. 失败案例</h2>
+    <table>
+        <thead><tr><th>现象</th><th>根因方向</th></tr></thead>
+        <tbody>
+        <tr><td>断线期间通知消失</td><td>只实现了 WebSocket 发送，没有持久化或未读补拉。</td></tr>
+        <tr><td>同一通知重复处理</td><td>重连重放没有唯一 ID 或客户端幂等处理。</td></tr>
+        <tr><td>发送异常后仍认为已送达</td><td>没有把写失败转入离线队列，或状态更新和发送没有明确顺序。</td></tr>
+        <tr><td>多实例中通知发给错误节点</td><td>在线连接只在本机内存，发布请求没有经过共享路由或连接目录。</td></tr>
+        </tbody>
+    </table>
+
+    <h2>6. 练习：先回忆，再验证</h2>
+    <div class="exercise">
+        <p>运行示例后回答下面 4 个问题：</p>
+        <ol>
+            <li>
+                为什么 WebSocket 写入成功不等于通知已经被用户处理？
+                <details class="answer">
+                    <summary>查看答案</summary>
+                    <p>写入成功只说明服务端把数据交给当前连接，无法证明客户端收到、展示或完成业务处理。需要客户端确认、唯一 ID 和补拉机制才能表达更强的可靠性。</p>
+                </details>
+            </li>
+            <li>
+                为什么在线索引和未读列表必须分开？
+                <details class="answer">
+                    <summary>查看答案</summary>
+                    <p>在线索引描述当前连接在哪里；未读列表描述哪些通知还没有被确认。连接会变化，但未确认的业务事实不能因为连接断开就消失。</p>
+                </details>
+            </li>
+            <li>
+                为什么通知需要唯一 ID？
+                <details class="answer">
+                    <summary>查看答案</summary>
+                    <p>重连、重试和补拉可能让同一通知被发送多次。唯一 ID 允许客户端和服务端做去重、ACK 和幂等处理。</p>
+                </details>
+            </li>
+            <li>
+                多实例部署时，为什么单机内存的 <code>onlineUsers</code> 不够？
+                <details class="answer">
+                    <summary>查看答案</summary>
+                    <p>用户连接可能在实例 A，而发布请求到达实例 B。实例 B 看不到 A 的内存索引，需要共享消息通道、连接目录或让消息经过能路由到目标连接的组件。</p>
+                </details>
+            </li>
+        </ol>
+    </div>
+
+    <div class="quiz" data-quiz>
+        <p><strong>快速检查：</strong>离线通知最基本的可靠性保障是什么？</p>
+        <button data-correct="false">只记录 WebSocket close code</button>
+        <button data-correct="true">保存未确认通知并支持补拉</button>
+        <button data-correct="false">收到 HTTP 200 就删除通知</button>
+        <p class="feedback" aria-live="polite"></p>
+    </div>
+
+    <nav class="lesson-nav" aria-label="课程导航">
+        <a href="0006-heartbeat-reconnect-security.html">← 上一课：心跳、断线和安全边界</a>
+        <a class="next" href="0008-proxy-and-multi-instance.html">下一课：代理、网关和多实例 →</a>
+    </nav>
+
+    <h2>本课参考</h2>
+    <ul>
+        <li><a href="https://docs.spring.io/spring-framework/reference/web/websocket/server.html">Spring Framework WebSocket Server</a></li>
+        <li><a href="https://www.rfc-editor.org/rfc/rfc6455#section-5.5.1">RFC 6455 §5.5.1：Close</a></li>
+        <li><a href="../examples/index.html#example-0007">本课独立示例</a></li>
+    </ul>
+
+    <p class="footer">完成在线推送、离线补拉和 ACK 验证后，把请求结果与测试结果发给我。下一课将把单机连接状态扩展到代理和多实例场景。</p>
+</main>
+<script src="../assets/quiz.js" defer></script>
+</body>
+</html>

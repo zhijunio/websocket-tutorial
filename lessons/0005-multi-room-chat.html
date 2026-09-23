@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>第 5 课：多房间聊天与广播</title>
+    <link rel="stylesheet" href="../assets/styles.css">
+</head>
+<body>
+<main class="page">
+    <p class="kicker">Lesson 0005 · G1</p>
+    <h1>从回显扩展到多房间聊天</h1>
+    <p class="lead">本课的唯一目标：设计并实现一个不会串房间消息、能够清理断开成员的多房间 WebSocket 服务。</p>
+
+    <div class="note">
+        <strong>G1 验收范围：</strong>支持多个房间、加入/离开、房间内广播、不同房间不串消息，以及连接断开后的最终成员清理。本课不处理鉴权、持久化和多实例路由，这些留到后续课程。
+    </div>
+
+    <p>本课有独立示例项目：<a href="../examples/index.html#example-0005"><code>examples/0005-multi-room-chat</code></a>。</p>
+
+    <h2>1. 先设计消息协议</h2>
+    <p>不要先写一堆 <code>if</code>。先固定客户端命令和服务端事件，使浏览器、服务端和测试共享同一份契约。</p>
+    <table>
+        <thead><tr><th>方向</th><th>事件</th><th>必要字段</th></tr></thead>
+        <tbody>
+        <tr><td>客户端 → 服务端</td><td><code>join</code></td><td><code>room</code></td></tr>
+        <tr><td>客户端 → 服务端</td><td><code>leave</code></td><td><code>room</code></td></tr>
+        <tr><td>客户端 → 服务端</td><td><code>chat</code></td><td><code>room</code>、<code>text</code></td></tr>
+        <tr><td>服务端 → 客户端</td><td><code>joined</code>、<code>left</code></td><td><code>room</code>、<code>members</code></td></tr>
+        <tr><td>服务端 → 客户端</td><td><code>message</code></td><td><code>room</code>、<code>from</code>、<code>text</code></td></tr>
+        <tr><td>服务端 → 客户端</td><td><code>error</code></td><td><code>code</code>、<code>message</code></td></tr>
+        </tbody>
+    </table>
+    <p>示例项目限制房间名为 1~32 个字母、数字、下划线或短横线，消息正文限制为 1~256 个字符。限制不是完整安全方案，但能避免第一版协议没有边界。</p>
+
+    <h2>2. 需要维护两个方向的索引</h2>
+    <pre>rooms:
+  red  -&gt; [session-a, session-b]
+  blue -&gt; [session-c]
+
+sessionRooms:
+  session-a -&gt; [red]
+  session-b -&gt; [red]
+  session-c -&gt; [blue]</pre>
+    <img src="../assets/room-membership.svg" alt="多房间聊天中 rooms 与 sessionRooms 的双向成员索引图" style="width:100%;height:auto">
+    <p>广播只需要从 <code>rooms</code> 找成员；连接断开时则需要从 <code>sessionRooms</code> 找出这个连接加入过的所有房间并清理。只维护房间到连接的单向索引，会让断开清理变成全表扫描，或者留下脏成员。</p>
+    <p>示例使用 <code>ConcurrentHashMap</code> 和并发 Set 保存内存状态。它解决集合结构的并发访问，不等于解决所有发送并发和业务一致性问题。</p>
+
+    <h2>3. 源码导读：从命令到广播</h2>
+    <p>先看<a href="../examples/0005-multi-room-chat/src/main/java/com/example/websocket/WebSocketConfig.java">配置类</a>：它只把 <code>/ws/chat</code> 映射到 Handler。业务状态和协议分派都集中在<a href="../examples/0005-multi-room-chat/src/main/java/com/example/websocket/RoomChatWebSocketHandler.java">RoomChatWebSocketHandler</a>。</p>
+    <pre>handleTextMessage
+    ├─ 解析 ClientCommand
+    ├─ join  → rooms + sessionRooms → joined/member_joined
+    ├─ leave → 移除两个索引 → left/member_left
+    └─ chat  → 校验成员身份 → broadcast
+
+afterConnectionClosed
+    └─ sessionRooms 找到所有房间 → 从 rooms 清理 → 通知剩余成员</pre>
+    <p>源码里最重要的不是方法数量，而是两个不变量：</p>
+    <ul>
+        <li>连接属于某个房间，当且仅当它同时出现在该房间的成员集合和自己的房间集合中。</li>
+        <li>广播只遍历目标房间的快照；清理完成后，空房间必须从 <code>rooms</code> 删除。</li>
+    </ul>
+    <p><a href="../examples/0005-multi-room-chat/src/test/java/com/example/websocket/RoomChatWebSocketHandlerTests.java">测试</a>证明了两件事：不同房间不会收到彼此消息，连接关闭会清理它加入过的所有房间。它还没有证明真实网络握手、慢客户端和多线程压力，这些属于后续验收。</p>
+
+    <h2>4. 广播与发送边界</h2>
+    <p>广播时先复制成员快照，再逐个发送。发送到同一个会话可能与另一个广播并发，因此示例用 <code>synchronized(session)</code> 保证单个会话的发送不会交错。生产系统通常还要加入有界发送队列、慢客户端策略和指标。</p>
+    <pre>for (WebSocketSession member : snapshot(roomMembers)) {
+    if (member != excluded) {
+        send(member, event);
+    }
+}</pre>
+    <p>本课的广播包含发送者自身，方便客户端确认消息已经进入服务端。加入/离开事件则可以分别通知请求者和房间里的其他成员。</p>
+
+    <h2>5. 运行和验证</h2>
+    <pre>cd examples/0005-multi-room-chat
+mvn test
+mvn spring-boot:run</pre>
+    <p>打开两个浏览器标签页，分别连接 <code>ws://localhost:8080/ws/chat</code>，都加入 <code>red</code>。一个标签发送聊天消息，两个标签都应收到。再让第三个标签加入 <code>blue</code>，它不应收到 <code>red</code> 的消息。</p>
+    <p>关闭一个标签页，再让剩余成员发送或观察 <code>member_left</code> 事件，确认服务端最终移除了断开连接。</p>
+
+    <h2>6. 失败案例</h2>
+    <table>
+        <thead><tr><th>现象</th><th>根因方向</th></tr></thead>
+        <tbody>
+        <tr><td>蓝房间收到红房间消息</td><td>广播使用了全局连接集合，或发送前没有按房间筛选。</td></tr>
+        <tr><td>断开用户仍被计入成员</td><td>只实现了 Close 帧路径，没有处理底层连接关闭回调。</td></tr>
+        <tr><td>同一连接的消息内容交错</td><td>多个线程同时写入同一个 WebSocket session，没有发送串行化或队列。</td></tr>
+        <tr><td>房间集合越来越多</td><td>空房间没有在最后一个成员离开后删除。</td></tr>
+        </tbody>
+    </table>
+
+    <h2>7. 练习：先回忆，再验证</h2>
+    <div class="exercise">
+        <p>运行独立示例后，回答下面 4 个问题：</p>
+        <ol>
+            <li>
+                为什么需要同时维护 <code>rooms</code> 和 <code>sessionRooms</code>？
+                <details class="answer">
+                    <summary>查看答案</summary>
+                    <p><code>rooms</code> 用于按房间广播，<code>sessionRooms</code> 用于连接断开时快速找到它加入过的所有房间。两个方向分别服务于发送和清理。</p>
+                </details>
+            </li>
+            <li>
+                为什么广播前要复制成员快照？
+                <details class="answer">
+                    <summary>查看答案</summary>
+                    <p>发送过程中成员可能加入、离开或被清理。快照让本次广播遍历稳定，也避免在并发集合变化时把广播逻辑和状态修改纠缠在一起。</p>
+                </details>
+            </li>
+            <li>
+                为什么并发 Map 不能自动保证消息发送安全？
+                <details class="answer">
+                    <summary>查看答案</summary>
+                    <p>并发 Map 只保护集合结构的访问，不保护同一个 WebSocket session 的写入顺序。多个线程仍可能同时调用发送方法，因此需要串行化或有界发送队列。</p>
+                </details>
+            </li>
+            <li>
+                这个示例为什么还不能直接称为生产级聊天系统？
+                <details class="answer">
+                    <summary>查看答案</summary>
+                    <p>它只把状态保存在单机内存中，没有鉴权、持久化、离线补拉、幂等、限流、慢客户端治理或多实例消息路由，只适合作为 G1 的最小起点。</p>
+                </details>
+            </li>
+        </ol>
+    </div>
+
+    <div class="quiz" data-quiz>
+        <p><strong>快速检查：</strong>连接断开时，最重要的清理对象是什么？</p>
+        <button data-correct="false">只清理最近一个房间</button>
+        <button data-correct="true">清理该连接加入过的所有房间</button>
+        <button data-correct="false">清理所有房间的全部成员</button>
+        <p class="feedback" aria-live="polite"></p>
+    </div>
+
+    <nav class="lesson-nav" aria-label="课程导航">
+        <a href="0004-jakarta-server-endpoint.html">← 上一课：Jakarta @ServerEndpoint 对照</a>
+        <a class="next" href="0006-heartbeat-reconnect-security.html">下一课：心跳、断线和安全边界 →</a>
+    </nav>
+
+    <h2>本课参考</h2>
+    <ul>
+        <li><a href="https://docs.spring.io/spring-framework/reference/web/websocket/server.html">Spring Framework：WebSocket Server Configuration</a></li>
+        <li><a href="https://www.rfc-editor.org/rfc/rfc6455#section-7.1">RFC 6455 §7.1：连接关闭</a></li>
+        <li><a href="../examples/index.html#example-0005">本课独立示例</a></li>
+        <li><a href="0004-jakarta-server-endpoint.html">上一课：Jakarta @ServerEndpoint 对照</a></li>
+    </ul>
+
+    <p class="footer">完成 G1 的两个房间隔离和断开清理验证后，把测试结果和你的协议/状态模型解释发给我。下一课将处理心跳、重连、Origin 和鉴权边界。</p>
+</main>
+<script src="../assets/quiz.js" defer></script>
+</body>
+</html>

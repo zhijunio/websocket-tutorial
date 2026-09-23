@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 360" role="img" aria-labelledby="title desc">
+  <title id="title">WebSocket 帧结构与控制帧</title>
+  <desc id="desc">展示 FIN、RSV、opcode、MASK、payload length 和 payload data 在帧中的位置。</desc>
+  <defs>
+    <style>
+      .label { font: 700 18px system-ui, sans-serif; fill: #17202a; }
+      .small { font: 15px ui-monospace, monospace; fill: #17202a; }
+      .muted { font: 14px system-ui, sans-serif; fill: #5e6b78; }
+      .cell { fill: #e4f0ee; stroke: #165d63; stroke-width: 1.5; }
+      .control { fill: #f4e7dd; stroke: #a65b2b; stroke-width: 1.5; }
+    </style>
+  </defs>
+  <rect width="1000" height="360" fill="#fbfaf7"/>
+  <text x="500" y="35" text-anchor="middle" class="label">WebSocket Base Framing Protocol</text>
+  <text x="72" y="70" text-anchor="middle" class="muted">第 1 字节</text>
+  <text x="260" y="70" text-anchor="middle" class="muted">第 2 字节</text>
+  <text x="585" y="70" text-anchor="middle" class="muted">可选字段</text>
+  <text x="905" y="70" text-anchor="middle" class="muted">数据</text>
+
+  <rect x="30" y="90" width="60" height="70" class="cell"/>
+  <rect x="90" y="90" width="150" height="70" class="cell"/>
+  <rect x="240" y="90" width="60" height="70" class="cell"/>
+  <rect x="300" y="90" width="210" height="70" class="cell"/>
+  <rect x="510" y="90" width="150" height="70" class="cell"/>
+  <rect x="660" y="90" width="310" height="70" class="cell"/>
+  <text x="60" y="122" text-anchor="middle" class="small">FIN</text>
+  <text x="165" y="122" text-anchor="middle" class="small">RSV1-3</text>
+  <text x="270" y="122" text-anchor="middle" class="small">opcode</text>
+  <text x="405" y="122" text-anchor="middle" class="small">MASK + length</text>
+  <text x="585" y="122" text-anchor="middle" class="small">ext. length / key</text>
+  <text x="815" y="122" text-anchor="middle" class="small">payload data</text>
+  <text x="500" y="190" text-anchor="middle" class="muted">文本 0x1 · 二进制 0x2 · Close 0x8 · Ping 0x9 · Pong 0xA</text>
+
+  <rect x="160" y="235" width="220" height="58" rx="5" class="control"/>
+  <rect x="390" y="235" width="220" height="58" rx="5" class="cell"/>
+  <rect x="620" y="235" width="220" height="58" rx="5" class="control"/>
+  <text x="270" y="269" text-anchor="middle" class="label">客户端 → 服务端</text>
+  <text x="500" y="269" text-anchor="middle" class="label">消息帧</text>
+  <text x="730" y="269" text-anchor="middle" class="label">控制帧</text>
+  <text x="500" y="330" text-anchor="middle" class="muted">客户端方向必须 MASK；控制帧不可分片且 Payload ≤ 125 字节</text>
+</svg>

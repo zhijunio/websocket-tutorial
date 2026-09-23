@@ -1,0 +1,20 @@
+package com.example.websocket;
+
+import java.io.IOException;
+
+import org.springframework.stereotype.Component;
+import org.springframework.web.socket.TextMessage;
+import org.springframework.web.socket.WebSocketSession;
+import org.springframework.web.socket.handler.TextWebSocketHandler;
+
+@Component
+public class EchoWebSocketHandler extends TextWebSocketHandler {
+    @Override
+    protected void handleTextMessage(WebSocketSession session, TextMessage message) throws IOException {
+        synchronized (session) {
+            if (session.isOpen()) {
+                session.sendMessage(message);
+            }
+        }
+    }
+}
