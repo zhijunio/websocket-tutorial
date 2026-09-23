@@ -6,7 +6,9 @@
 
 ## 在线阅读
 
-如果仓库启用了 GitHub Pages，可以从首页开始：
+线上地址：[https://zhijunio.github.io/websocket-tutorial/](https://zhijunio.github.io/websocket-tutorial/)
+
+可以从首页开始：
 
 - [课程首页](index.html)
 - [课程列表](index.html#lessons)
@@ -147,7 +149,7 @@ NOTES.md       教学工作区内部维护备注
 
 ## GitHub Pages
 
-仓库已提供 `.github/workflows/deploy-pages.yml`，推送到 `main` 分支或手动运行工作流时，会自动发布根目录静态内容。发布前需要在 GitHub 仓库设置中将 Pages 的发布方式设置为 **GitHub Actions**。
+仓库已提供 `.github/workflows/deploy-pages.yml`，推送到 `main` 分支或手动运行工作流时，会自动发布根目录静态内容。
 
 发布后确认：
 
