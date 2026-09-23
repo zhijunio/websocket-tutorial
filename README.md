@@ -147,12 +147,15 @@ NOTES.md       教学工作区内部维护备注
 
 ## GitHub Pages
 
-根目录的 `index.html` 可作为 GitHub Pages 首页。发布前确认：
+仓库已提供 `.github/workflows/deploy-pages.yml`，推送到 `main` 分支或手动运行工作流时，会自动发布根目录静态内容。发布前需要在 GitHub 仓库设置中将 Pages 的发布方式设置为 **GitHub Actions**。
+
+发布后确认：
 
 1. 仓库已经推送到 GitHub。
-2. GitHub Pages 的发布源选择包含 `index.html` 的分支或目录。
-3. 页面中的相对链接仍然可以访问。
-4. Java 示例只作为源码和文档展示，实际运行需要本地 Java、Maven 或 Docker 环境。
+2. `Deploy GitHub Pages` 工作流执行成功。
+3. GitHub Pages 环境显示部署 URL。
+4. 页面中的相对链接仍然可以访问。
+5. Java 示例只作为源码和文档展示，实际运行需要本地 Java、Maven 或 Docker 环境。
 
 ## 维护与贡献
 
