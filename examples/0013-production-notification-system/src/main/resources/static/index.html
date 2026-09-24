@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>生产导向 WebSocket 通知系统</title>
+    <style>
+        body { max-width: 960px; margin: 2rem auto; font: 16px system-ui, sans-serif; }
+        button, input { margin: .25rem; padding: .45rem; }
+        pre { background: #f4f4f4; padding: 1rem; min-height: 18rem; white-space: pre-wrap; }
+        .state { padding: .5rem; background: #eef6ff; }
+    </style>
+</head>
+<body>
+<h1>实时通知系统</h1>
+<p>示例账号：alice/password、bob/password、admin/password。此页面演示通知、补拉、ACK、一次性 ticket 和重连，不是聊天室。</p>
+<button id="sessionLogin">Session 登录</button>
+<button id="tokenLogin">Token 登录</button>
+<button id="sessionConnect">Session 连接</button>
+<button id="tokenConnect">Token + ticket 连接</button>
+<button id="disconnect">断开</button>
+<button id="stop">停止/恢复重连</button>
+<button id="notify">给 alice 发通知</button>
+<button id="presence">查询在线用户</button>
+<div class="state" id="state">连接状态：CLOSED</div>
+<pre id="log"></pre>
+<script>
+    const log = value => document.querySelector('#log').textContent += `${new Date().toISOString()} ${value}\n`;
+    const state = value => document.querySelector('#state').textContent = `连接状态：${value}`;
+    const wsOrigin = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}`;
+    let socket, accessToken, adminToken, mode = 'token', reconnect = true, attempts = 0, lastSequence = 0, csrf;
+    let reconnectTimer, connectionGeneration = 0;
+    const seenEventIds = new Set();
+
+    async function csrfToken() {
+        const response = await fetch('/api/csrf');
+        csrf = await response.json();
+        return csrf.token;
+    }
+    async function tokenLogin() {
+        const response = await fetch('/api/token', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({username: 'alice', password: 'password'})});
+        accessToken = (await response.json()).accessToken;
+        log('Token 登录成功');
+    }
+    async function sessionLogin() {
+        await csrfToken();
+        const response = await fetch('/api/session/login', {method: 'POST', headers: {'Content-Type': 'application/json', [csrf.headerName]: csrf.token}, body: JSON.stringify({username: 'alice', password: 'password'})});
+        log(`Session 登录：${response.status}`);
+    }
+    async function ticket() {
+        if (!accessToken) await tokenLogin();
+        await csrfToken();
+        const response = await fetch('/api/ws-ticket', {method: 'POST', headers: {'Authorization': `Bearer ${accessToken}`, [csrf.headerName]: csrf.token} });
+        if (!response.ok) throw new Error(`ticket ${response.status}`);
+        return (await response.json()).ticket;
+    }
+    function scheduleReconnect(generation, error) {
+        if (!reconnect || generation !== connectionGeneration) return;
+        if (error) log(`重连准备失败：${error.message}`);
+        const delay = Math.min(1000 * 2 ** attempts, 15000) + Math.random() * 500;
+        attempts++;
+        reconnectTimer = setTimeout(() => {
+            if (!reconnect || generation !== connectionGeneration) return;
+            connect(mode).catch(nextError => scheduleReconnect(connectionGeneration, nextError));
+        }, delay);
+    }
+    async function connect(nextMode) {
+        const generation = ++connectionGeneration;
+        mode = nextMode;
+        clearTimeout(reconnectTimer);
+        if (socket && socket.readyState !== WebSocket.CLOSED) {
+            socket.onclose = null;
+            socket.close(1000, 'replace');
+        }
+        let path;
+        try {
+            path = mode === 'token' ? `/ws/notifications?ticket=${encodeURIComponent(await ticket())}` : '/ws/notifications';
+        } catch (error) {
+            scheduleReconnect(generation, error);
+            throw error;
+        }
+        if (generation !== connectionGeneration) return;
+        const currentSocket = new WebSocket(wsOrigin + path);
+        socket = currentSocket;
+        state('CONNECTING');
+        currentSocket.onopen = () => {
+            if (generation !== connectionGeneration) return;
+            attempts = 0;
+            state('OPEN');
+            log(`${mode} 握手成功`);
+            currentSocket.send(JSON.stringify({type: 'resume', after: lastSequence}));
+        };
+        currentSocket.onmessage = event => {
+            if (generation !== connectionGeneration) return;
+            const message = JSON.parse(event.data);
+            if (Number.isFinite(message.sequence)) lastSequence = Math.max(lastSequence, message.sequence);
+            const duplicate = message.type === 'notification' && seenEventIds.has(message.eventId);
+            if (message.type === 'notification') {
+                seenEventIds.add(message.eventId);
+                while (seenEventIds.size > 1000) seenEventIds.delete(seenEventIds.values().next().value);
+                currentSocket.send(JSON.stringify({type: 'ack', eventId: message.eventId}));
+            }
+            if (!duplicate) log(event.data);
+        };
+        currentSocket.onerror = () => { if (generation === connectionGeneration) log('WebSocket error'); };
+        currentSocket.onclose = event => {
+            if (generation !== connectionGeneration) return;
+            state(`CLOSED ${event.code}`);
+            log(`关闭：${event.code} ${event.reason}`);
+            scheduleReconnect(generation);
+        };
+    }
+    document.querySelector('#sessionLogin').onclick = () => sessionLogin().catch(error => log(error.message));
+    document.querySelector('#tokenLogin').onclick = () => tokenLogin().catch(error => log(error.message));
+    document.querySelector('#sessionConnect').onclick = () => connect('session').catch(error => log(error.message));
+    document.querySelector('#tokenConnect').onclick = () => connect('token').catch(error => log(error.message));
+    document.querySelector('#disconnect').onclick = () => {
+        reconnect = false;
+        clearTimeout(reconnectTimer);
+        connectionGeneration++;
+        if (socket) { socket.onclose = null; socket.close(1000, 'manual'); }
+    };
+    document.querySelector('#stop').onclick = () => {
+        reconnect = !reconnect;
+        if (!reconnect) clearTimeout(reconnectTimer);
+        log(`自动重连：${reconnect}`);
+        if (reconnect && (!socket || socket.readyState === WebSocket.CLOSED)) connect(mode).catch(error => log(error.message));
+    };
+    document.querySelector('#notify').onclick = async () => { if (!adminToken) { const response = await fetch('/api/token', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({username: 'admin', password: 'password'})}); adminToken = (await response.json()).accessToken; } await csrfToken(); const response = await fetch('/api/notifications', {method: 'POST', headers: {'Content-Type': 'application/json', 'Idempotency-Key': crypto.randomUUID(), 'Authorization': `Bearer ${adminToken}`, [csrf.headerName]: csrf.token}, body: JSON.stringify({eventType: 'ALARM_CREATED', recipientType: 'USER', recipientId: 'alice', payload: JSON.stringify({text: '测试告警'})})}); log(`通知创建：${response.status}`); };
+    document.querySelector('#presence').onclick = async () => { const response = await fetch('/api/presence/users', {headers: {'Authorization': `Bearer ${accessToken || ''}`}}); log(await response.text()); };
+</script>
+</body>
+</html>
